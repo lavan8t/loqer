@@ -1,0 +1,6 @@
+#!/usr/bin/env bash
+CONFIG_FILE="${HOME:-/home/lavan}/.config/quickshell/ii/loqControl.qml"
+if [ ! -f "$CONFIG_FILE" ]; then
+    CONFIG_FILE="/home/lavan/.config/quickshell/ii/loqControl.qml"
+fi
+exec /usr/bin/qs -p "$CONFIG_FILE" "$@"

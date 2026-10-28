@@ -1,0 +1,9 @@
+# Loqer Hardware Control Sudo Rules
+lavan ALL=(ALL) NOPASSWD: /usr/local/bin/loqer
+lavan ALL=(ALL) NOPASSWD: /home/lavan/.local/bin/loqer
+lavan ALL=(ALL) NOPASSWD: /usr/local/bin/loq-ctl
+lavan ALL=(ALL) NOPASSWD: /usr/local/bin/loq-hw-write
+lavan ALL=(ALL) NOPASSWD: /usr/local/bin/loq-generate-icon
+
+Defaults!/usr/local/bin/loqer env_keep += "WAYLAND_DISPLAY XDG_RUNTIME_DIR DISPLAY XAUTHORITY XDG_SESSION_TYPE"
+Defaults!/home/lavan/.local/bin/loqer env_keep += "WAYLAND_DISPLAY XDG_RUNTIME_DIR DISPLAY XAUTHORITY XDG_SESSION_TYPE"

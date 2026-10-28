@@ -1,0 +1,377 @@
+#!/usr/bin/env python3
+"""
+Production Lenovo LOQ / Legion Power & Profile Daemon
+- 100% Zero-glitch, zero-overhead event-driven state control.
+- Professional 4-stage Fn+Q cycle on AC:
+    Quiet (Blue, 1) -> Balanced (White, 2) -> Performance (Red, 3) -> Custom (Pink, 255) -> Quiet (Blue, 1)
+- Never locks fan controller mutex (lockfancontroller=0) for silky-smooth EC thermal operation.
+- Never performs redundant display modesetting when cycling profiles on AC power.
+- Zero bus contention: allows Lenovo EC firmware to natively manage hardware curves.
+- Fully atomic sysfs writes.
+"""
+
+import os
+import sys
+import glob
+import json
+import time
+import select
+
+POWERMODE_PATH = "/sys/devices/platform/legion/powermode"
+FULLSPEED_PATH = "/sys/devices/platform/legion/fan_fullspeed"
+LOCKFAN_PATH = "/sys/devices/platform/legion/lockfancontroller"
+PLATFORM_PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
+NO_TURBO_PATH = "/sys/devices/system/cpu/intel_pstate/no_turbo"
+GPU_RUNTIME_PATH = "/sys/bus/pci/devices/0000:01:00.0/power/runtime_status"
+REFRESH_SCRIPT = "/usr/local/bin/set-panel-refresh"
+MANUAL_OVERRIDE_FILE = "/run/loq-profile-override"
+
+STATUS_FILES = [
+    "/run/lenovo-power-status.json",
+    "/run/user/1000/lenovo-power-status.json"
+]
+
+def read_file(path, default=""):
+    try:
+        with open(path, "r") as f:
+            return f.read().strip()
+    except Exception:
+        return default
+
+def write_file(path, content):
+    try:
+        with open(path, "w") as f:
+            f.write(str(content).strip() + "\n")
+        return True
+    except Exception:
+        return False
+
+def is_ac_online():
+    for f in glob.glob("/sys/class/power_supply/*/online"):
+        dev_dir = os.path.dirname(f)
+        type_file = os.path.join(dev_dir, "type")
+        if read_file(type_file, "") != "Battery":
+            if read_file(f, "0") == "1":
+                return True
+    return False
+
+def get_current_profile():
+    if os.path.isfile(POWERMODE_PATH):
+        val = read_file(POWERMODE_PATH, "")
+        if val in ("255", "custom"):
+            return "custom"
+        elif val == "3":
+            return "performance"
+        elif val == "1":
+            return "low-power"
+        elif val == "2":
+            return "balanced"
+
+    for p in sorted(glob.glob("/sys/class/platform-profile/platform-profile-*/profile")):
+        val = read_file(p, "").lower()
+        if val in ("custom", "max-power"):
+            return "custom"
+        elif val:
+            return val
+
+    return read_file(PLATFORM_PROFILE_PATH, "balanced")
+
+def get_legion_profile_path():
+    for p in glob.glob("/sys/class/platform-profile/platform-profile-*"):
+        try:
+            with open(os.path.join(p, "name")) as f:
+                if "lenovo-legion" in f.read():
+                    return os.path.join(p, "profile")
+        except Exception:
+            pass
+    return None
+
+def set_hardware_profile(p):
+    p = p.lower()
+    legion_path = get_legion_profile_path()
+    if p in ("custom", "max-power"):
+        if legion_path:
+            write_file(legion_path, "custom")
+        else:
+            write_file(POWERMODE_PATH, "255")
+        if os.path.isfile(FULLSPEED_PATH):
+            write_file(FULLSPEED_PATH, "1")
+        if os.path.isfile(LOCKFAN_PATH):
+            write_file(LOCKFAN_PATH, "0")
+        return True
+    elif p == "performance":
+        if legion_path:
+            write_file(legion_path, "performance")
+        else:
+            write_file(POWERMODE_PATH, "3")
+        if os.path.isfile(FULLSPEED_PATH):
+            write_file(FULLSPEED_PATH, "0")
+        if os.path.isfile(LOCKFAN_PATH):
+            write_file(LOCKFAN_PATH, "0")
+        return True
+    elif p == "balanced":
+        if legion_path:
+            write_file(legion_path, "balanced")
+        else:
+            write_file(POWERMODE_PATH, "2")
+        if os.path.isfile(FULLSPEED_PATH):
+            write_file(FULLSPEED_PATH, "0")
+        if os.path.isfile(LOCKFAN_PATH):
+            write_file(LOCKFAN_PATH, "0")
+        return True
+    elif p in ("quiet", "low-power"):
+        if legion_path:
+            write_file(legion_path, "low-power")
+        else:
+            write_file(POWERMODE_PATH, "1")
+        if os.path.isfile(FULLSPEED_PATH):
+            write_file(FULLSPEED_PATH, "0")
+        if os.path.isfile(LOCKFAN_PATH):
+            write_file(LOCKFAN_PATH, "0")
+        return True
+    return False
+
+def set_rapl_limit(pl1_w, pl2_w):
+    pl1_uw = pl1_w * 1000000
+    pl2_uw = pl2_w * 1000000
+    for zone in glob.glob("/sys/class/powercap/intel-rapl*") + glob.glob("/sys/class/powercap/intel-rapl-mmio*"):
+        if not os.path.isdir(zone):
+            continue
+        write_file(os.path.join(zone, "enabled"), "1")
+        write_file(os.path.join(zone, "constraint_0_power_limit_uw"), str(pl1_uw))
+        write_file(os.path.join(zone, "constraint_1_power_limit_uw"), str(pl2_uw))
+
+def set_epp(preference):
+    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"):
+        write_file(f, preference)
+
+def set_turbo(disabled):
+    write_file(NO_TURBO_PATH, "1" if disabled else "0")
+
+def set_gpu_tgp(ctgp_w, ppab_w):
+    write_file("/sys/devices/platform/legion/gpu_ctgp_powerlimit", str(ctgp_w))
+    write_file("/sys/devices/platform/legion/gpu_ppab_powerlimit", str(ppab_w))
+
+def set_display_rate(rate_str):
+    if os.path.exists(REFRESH_SCRIPT):
+        try:
+            import subprocess
+            subprocess.run([REFRESH_SCRIPT, rate_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
+        except Exception:
+            pass
+
+def update_status_json(profile, target_state, ac_on):
+    is_saver = (target_state == "quiet_battery")
+    pl1 = 15 if is_saver else 55
+    pl2 = 25 if is_saver else 115
+    display_hz = 60 if is_saver else 144
+    turbo = not (read_file(NO_TURBO_PATH, "0") == "1")
+    gpu_status = read_file(GPU_RUNTIME_PATH, "unknown")
+    epp = read_file("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", "default")
+
+    # MUX & Hardware Telemetry
+    raw_igpu = read_file("/sys/devices/platform/legion/igpumode", "2")
+    igpu_mode = int(raw_igpu) if raw_igpu.isdigit() else 2
+
+    # Hwmon telemetry
+    fan1 = read_file("/sys/class/hwmon/hwmon5/fan1_input", "0")
+    fan2 = read_file("/sys/class/hwmon/hwmon5/fan2_input", "0")
+    cpu_t = read_file("/sys/class/hwmon/hwmon5/temp1_input", "0")
+    gpu_t = read_file("/sys/class/hwmon/hwmon5/temp2_input", "0")
+    cpu_temp = int(cpu_t) // 1000 if cpu_t.isdigit() else 0
+    gpu_temp = int(gpu_t) // 1000 if gpu_t.isdigit() else 0
+
+    fullspeed = (read_file("/sys/devices/platform/legion/fan_fullspeed", "0") == "1")
+    conservation = (read_file("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode", "0") == "1")
+    fn_lock = (read_file("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/fn_lock", "0") == "1")
+    touchpad = (read_file("/sys/devices/platform/legion/touchpad", "1") == "1")
+    winkey = (read_file("/sys/devices/platform/legion/winkey", "1") == "1")
+    overdrive = (read_file("/sys/devices/platform/legion/overdrive", "0") == "1")
+    raw_ctgp = read_file("/sys/devices/platform/legion/gpu_ctgp_powerlimit", "105")
+    raw_ppab = read_file("/sys/devices/platform/legion/gpu_ppab_powerlimit", "25")
+    ctgp_val = int(raw_ctgp) if raw_ctgp.isdigit() else 105
+    ppab_val = int(raw_ppab) if raw_ppab.isdigit() else 25
+    lockfan = (read_file("/sys/devices/platform/legion/lockfancontroller", "0") == "1")
+
+    # LLT Features: Keyboard backlight, I/O Port lighting, and Battery health
+    raw_kbd = read_file("/sys/devices/platform/legion/leds/platform::kbd_backlight_1/brightness", "1")
+    kbd_backlight = int(raw_kbd) if raw_kbd.isdigit() else 1
+    ioport_light = (read_file("/sys/devices/platform/legion/leds/platform::ioport/brightness", "1") == "1")
+
+    raw_bat_cap = read_file("/sys/class/power_supply/BAT1/capacity", "0")
+    bat_cap = int(raw_bat_cap) if raw_bat_cap.isdigit() else 0
+    bat_status = read_file("/sys/class/power_supply/BAT1/status", "Unknown")
+    raw_bat_full = read_file("/sys/class/power_supply/BAT1/energy_full", "0")
+    raw_bat_design = read_file("/sys/class/power_supply/BAT1/energy_full_design", "0")
+    raw_bat_cycles = read_file("/sys/class/power_supply/BAT1/cycle_count", "0")
+    bat_full = int(raw_bat_full) if raw_bat_full.isdigit() else 0
+    bat_design = int(raw_bat_design) if raw_bat_design.isdigit() else 0
+    bat_cycles = int(raw_bat_cycles) if raw_bat_cycles.isdigit() else 0
+    bat_health = round((bat_full / bat_design * 100), 1) if bat_design > 0 else 100.0
+
+    data = {
+        "profile": profile,
+        "is_saver": is_saver,
+        "ac_online": ac_on,
+        "pl1_w": pl1,
+        "pl2_w": pl2,
+        "turbo": turbo,
+        "epp": epp,
+        "gpu_status": gpu_status,
+        "display_hz": display_hz,
+        "igpu_mode": igpu_mode,
+        "fan1_rpm": int(fan1) if fan1.isdigit() else 0,
+        "fan2_rpm": int(fan2) if fan2.isdigit() else 0,
+        "cpu_temp": cpu_temp,
+        "gpu_temp": gpu_temp,
+        "fan_fullspeed": fullspeed,
+        "conservation_mode": conservation,
+        "fn_lock": fn_lock,
+        "touchpad": touchpad,
+        "winkey": winkey,
+        "overdrive": overdrive,
+        "gpu_ctgp_w": ctgp_val,
+        "gpu_ppab_w": ppab_val,
+        "gpu_total_w": ctgp_val + ppab_val,
+        "lockfancontroller": lockfan,
+        "kbd_backlight": kbd_backlight,
+        "ioport_light": ioport_light,
+        "battery_capacity": bat_cap,
+        "battery_status": bat_status,
+        "battery_health": bat_health,
+        "battery_cycles": bat_cycles,
+        "battery_wh_full": round(bat_full / 1000000.0, 1),
+        "battery_wh_design": round(bat_design / 1000000.0, 1)
+    }
+    json_bytes = json.dumps(data, indent=2).encode("utf-8")
+
+    for path in STATUS_FILES:
+        target_dir = os.path.dirname(path)
+        if os.path.isdir(target_dir):
+            tmp_path = path + ".tmp"
+            try:
+                with open(tmp_path, "wb") as f:
+                    f.write(json_bytes)
+                os.chmod(tmp_path, 0o644)
+                os.replace(tmp_path, path)
+            except Exception:
+                pass
+
+def enable_fnq_custom_hardware():
+    """Enable Lenovo EC native Fn+Q 4-stage cycle (Blue -> White -> Red -> Pink -> Blue) via CMOS port 0x7A"""
+    try:
+        fd = os.open("/dev/port", os.O_RDWR)
+        # Port 0x72 is index port, 0x73 is data port for extended CMOS/NVRAM
+        os.lseek(fd, 0x72, os.SEEK_SET)
+        os.write(fd, bytes([0x7A]))
+        os.lseek(fd, 0x73, os.SEEK_SET)
+        os.write(fd, bytes([0x01]))
+        os.close(fd)
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[lenovo-power-daemon] Could not set CMOS 0x7A: {e}\n")
+        return False
+
+def main():
+    print("[lenovo-power-daemon] Unified ultra-low-overhead power daemon active.", flush=True)
+
+    # Enable native hardware EC Fn+Q 4-stage cycle (Blue -> White -> Red -> Pink -> Blue)
+    enable_fnq_custom_hardware()
+
+    # Ensure fan controller mutex locking is disabled on startup
+    if os.path.isfile(LOCKFAN_PATH):
+        write_file(LOCKFAN_PATH, "0")
+
+    last_profile = None
+    last_target_state = None
+    last_json_write_time = 0.0
+
+    # Register sysfs poll
+    poll_obj = select.poll()
+    poll_fds = []
+    watch_paths = glob.glob("/sys/class/platform-profile/platform-profile-*/profile") + [PLATFORM_PROFILE_PATH, POWERMODE_PATH]
+    for p in watch_paths:
+        if os.path.exists(p):
+            try:
+                fd = os.open(p, os.O_RDONLY)
+                poll_obj.register(fd, select.POLLPRI | select.POLLERR)
+                poll_fds.append(fd)
+            except Exception:
+                pass
+
+    while True:
+        try:
+            curr_profile = get_current_profile()
+            ac_on = is_ac_online()
+
+            if curr_profile != last_profile:
+                print(f"[lenovo-power-daemon] Hardware state changed: {last_profile} -> {curr_profile} (AC={ac_on})", flush=True)
+
+                # Pure change detection: NEVER hijack or fight hardware EC hotkey switching
+                if curr_profile not in ("custom", "max-power") and os.path.isfile(FULLSPEED_PATH):
+                    write_file(FULLSPEED_PATH, "0")
+                elif curr_profile in ("custom", "max-power") and os.path.isfile(FULLSPEED_PATH):
+                    write_file(FULLSPEED_PATH, "1")
+
+                last_profile = curr_profile
+                try:
+                    subprocess.Popen(["/usr/local/bin/loq-generate-icon", curr_profile], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                except Exception:
+                    pass
+
+                # Apply CPU performance preferences cleanly based on detected hardware mode
+                active_profile = last_profile
+                if not ac_on and active_profile in ("low-power", "quiet"):
+                    target_state = "quiet_battery"
+                    set_rapl_limit(15, 25)
+                    set_gpu_tgp(45, 15)
+                    set_turbo(True)
+                    set_epp("power")
+                    if last_target_state != "quiet_battery":
+                        set_display_rate("60")
+                else:
+                    target_state = "standard"
+                    set_rapl_limit(55, 115)
+                    set_turbo(False)
+                    if active_profile in ("custom", "max-power", "performance"):
+                        set_epp("performance")
+                        set_gpu_tgp(105, 25)  # Maximum supported 105W cTGP + 25W Dynamic Boost = 130W!
+                    elif active_profile == "balanced":
+                        set_epp("balance_performance")
+                        set_gpu_tgp(60, 20)
+                    else:
+                        set_epp("balance_power")
+                        set_gpu_tgp(45, 15)
+
+                    # Only restore 144Hz if coming OUT of quiet_battery
+                    if last_target_state == "quiet_battery":
+                        set_display_rate("native")
+
+                last_target_state = target_state
+                update_status_json(active_profile, target_state, ac_on)
+                last_json_write_time = time.monotonic()
+
+            elif (time.monotonic() - last_json_write_time) > 1.5:
+                enable_fnq_custom_hardware()
+                target_state = "quiet_battery" if (not ac_on and curr_profile in ("low-power", "quiet")) else "standard"
+                update_status_json(curr_profile, target_state, ac_on)
+                last_json_write_time = time.monotonic()
+
+        except Exception as e:
+            sys.stderr.write(f"[lenovo-power-daemon] Loop error: {e}\n")
+
+        # Fast poll timeout (100ms) for instant Fn+Q response without CPU burn
+        if poll_fds:
+            try:
+                events = poll_obj.poll(100)
+                if events:
+                    for fd, _ in events:
+                        os.lseek(fd, 0, os.SEEK_SET)
+                        os.read(fd, 64)
+            except Exception:
+                time.sleep(0.1)
+        else:
+            time.sleep(0.1)
+
+if __name__ == "__main__":
+    main()

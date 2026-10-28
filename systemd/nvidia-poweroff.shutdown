@@ -1,0 +1,7 @@
+#!/bin/sh
+# Wake NVIDIA GPU from D3cold to D0 before final ACPI poweroff to prevent SBIOS power-cut deadlock
+for dev in /sys/bus/pci/devices/0000:01:00.*/power/control; do
+    if [ -f "$dev" ]; then
+        echo on > "$dev" 2>/dev/null || true
+    fi
+done

@@ -1,0 +1,72 @@
+#!/usr/bin/env python3
+import sys
+import os
+import math
+import subprocess
+
+COLORS = {
+    "quiet": "#38BDF8",
+    "low-power": "#38BDF8",
+    "blue": "#38BDF8",
+    "balanced": "#F8FAFC",
+    "white": "#F8FAFC",
+    "performance": "#EF4444",
+    "red": "#EF4444",
+    "custom": "#EC4899",
+    "pink": "#EC4899",
+    "extreme": "#EC4899"
+}
+
+def generate_loq_svg(color, size=512):
+    center = size / 2.0
+    stroke_width = (size / 2.0) * 0.3024
+    radius = (size / 2.0) - (stroke_width / 2.0) - (size * 0.05)
+    
+    arcs = [(-22.5, 82.5), (97.5, 202.5), (217.5, 322.5)]
+    paths = []
+    for start_deg, end_deg in arcs:
+        start_rad = math.radians(start_deg)
+        end_rad = math.radians(end_deg)
+        x1 = center + radius * math.cos(start_rad)
+        y1 = center + radius * math.sin(start_rad)
+        x2 = center + radius * math.cos(end_rad)
+        y2 = center + radius * math.sin(end_rad)
+        paths.append(f"<path d=\"M {x1:.2f} {y1:.2f} A {radius:.2f} {radius:.2f} 0 0 1 {x2:.2f} {y2:.2f}\" fill=\"none\" stroke=\"{color}\" stroke-width=\"{stroke_width:.2f}\" stroke-linecap=\"butt\" />")
+    
+    bg_radius = size * 0.22
+    return f"""<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 {size} {size}" width="{size}" height="{size}">
+    <rect width="{size}" height="{size}" rx="{bg_radius:.1f}" fill="#14171F" />
+    {"".join(paths)}
+</svg>"""
+
+def main():
+    profile = sys.argv[1].lower() if len(sys.argv) > 1 else "balanced"
+    color = COLORS.get(profile, profile if profile.startswith("#") else "#F8FAFC")
+
+    user_base = "/home/lavan/.local/share/icons/hicolor"
+    scalable_dir = os.path.join(user_base, "scalable/apps")
+    os.makedirs(scalable_dir, exist_ok=True)
+    svg_path = os.path.join(scalable_dir, "loqer.svg")
+    svg_content = generate_loq_svg(color, 512)
+    with open(svg_path, "w") as f:
+        f.write(svg_content)
+    
+    sizes = [32, 48, 64, 128, 256, 512]
+    for s in sizes:
+        s_dir = os.path.join(user_base, f"{s}x{s}/apps")
+        os.makedirs(s_dir, exist_ok=True)
+        png_path = os.path.join(s_dir, "loqer.png")
+        try:
+            subprocess.run(["magick", "-background", "none", svg_path, "-resize", f"{s}x{s}", png_path],
+                           check=True, capture_output=True)
+        except Exception:
+            pass
+
+    # Ensure ownership is lavan:lavan
+    try:
+        subprocess.run(["chown", "-R", "lavan:lavan", user_base], check=False)
+    except Exception:
+        pass
+
+if __name__ == "__main__":
+    main()

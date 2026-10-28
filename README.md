@@ -1,0 +1,137 @@
+<p align="center">
+  <img src="assets/loqer.svg" width="128" height="128" alt="Loqer logo">
+</p>
+
+# Loqer
+
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Fedora-blue.svg)](https://getfedora.org)
+[![UI](https://img.shields.io/badge/ui-Quickshell%20Material%203-6750A4.svg)](https://quickshell.outfoxxed.me)
+[![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
+Loqer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux.
+
+The project pairs a background daemon with a Quickshell desktop window and a command-line tool named `loq-ctl`.
+
+## Features
+
+### Power profiles and Fn+Q
+
+The daemon synchronizes system power targets with the physical Fn+Q hotkey using EC CMOS register `0x7A`. It switches across four states:
+
+- Quiet: 45W cTGP, 15W PPAB, low fan speeds.
+- Balanced: 60W cTGP, 20W PPAB, dynamic fan curve.
+- Performance: 105W cTGP, 25W PPAB (130W total GPU limit), aggressive fan curve.
+- Custom: 105W cTGP, 25W PPAB, unlocked fan controller, full fan speed support.
+
+### GPU MUX switch
+
+The `igpumode` sysfs interface switches display wiring:
+
+- Dedicated (0): routes the internal display directly to the NVIDIA RTX GPU.
+- iGPU (1): forces the integrated Intel graphics.
+- Hybrid (2): enables runtime power management (D3cold) for the NVIDIA card.
+
+### Fan curves
+
+The daemon writes directly to the `legion_hwmon` sysfs attributes `pwm1_auto_point1_temp` through `pwm2_auto_point10_pwm`.
+
+- Supports 10 temperature and PWM steps for the CPU and GPU fans.
+- Ships presets for quiet, balanced, performance, and maximum cooling.
+- Reverts control to the embedded controller with the auto preset.
+
+### Hardware controls
+
+- Battery conservation: caps charge at 80% via `/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode`.
+- Fn lock: toggles function key behavior in hardware.
+- Input locks: enables or disables the touchpad and Windows key.
+- Display: toggles panel overdrive and switches the internal display between 60Hz and 144Hz.
+- Power limits: sets Intel RAPL PL1 and PL2 limits alongside GPU cTGP and PPAB targets.
+
+## Repository structure
+
+```
+loqer/
+├── bin/
+│   ├── lenovo-power-daemon    # Background ACPI and sysfs sync daemon
+│   ├── loq-ctl                # Hardware control CLI
+│   ├── loq-generate-icon      # LOQ ring SVG and PNG generator
+│   ├── loq-hw-write           # Sudo helper for sysfs writes
+│   ├── loqer                  # Wrapper that starts the Quickshell GUI
+│   └── set-panel-refresh      # Hyprland monitor refresh rate script
+├── ui/
+│   └── loqControl.qml         # Quickshell Material 3 desktop window
+├── assets/
+│   ├── loqer.desktop          # Application launcher entry
+│   └── loqer.svg              # Ring emblem vector graphic
+├── systemd/
+│   ├── lenovo-fnq-custom.service # Restores CMOS 0x7A across reboots
+│   ├── lenovo-power.service   # Runs lenovo-power-daemon as a system service
+│   └── nvidia-poweroff.shutdown # Wakes GPU to D0 during shutdown to prevent lockups
+├── configs/
+│   ├── 99-lid-ignore.conf     # Ignores laptop lid close events
+│   ├── hyprland-loqer.lua     # Window floating and sizing rules
+│   ├── loqer-sudoers          # Passwordless sudo rules for hardware writes
+│   └── nvidia-power-management.conf # Dynamic power management options
+├── install.sh                 # Deployment script
+├── uninstall.sh               # Removal script
+└── LICENSE
+```
+
+## Installation
+
+### Requirements
+
+- A Lenovo LOQ or Legion laptop.
+- Linux with kernel drivers `legion_laptop` and `ideapad_acpi`.
+- `quickshell` and `imagemagick` installed.
+- Sudo access.
+
+### Install
+
+Run the install script as root:
+
+```bash
+git clone https://github.com/lavan8t/loqer.git
+cd loqer
+sudo ./install.sh
+```
+
+The script copies executables to `/usr/local/bin`, installs the Quickshell UI to `~/.config/quickshell/ii/loqControl.qml`, registers systemd units, installs shutdown hooks, and generates icons for the current desktop theme.
+
+## CLI usage
+
+`loq-ctl` handles all hardware operations directly from the shell.
+
+```bash
+# Power profiles
+loq-ctl profile quiet
+loq-ctl profile balanced
+loq-ctl profile performance
+loq-ctl profile custom
+
+# Display routing (MUX)
+loq-ctl mux hybrid
+loq-ctl mux dedicated
+loq-ctl mux igpu
+
+# Hardware toggles
+loq-ctl conservation 1
+loq-ctl fn_lock toggle
+loq-ctl touchpad 1
+loq-ctl refresh 144
+
+# Fan curve presets and manual steps
+loq-ctl fancurve preset balanced
+loq-ctl fancurve get
+loq-ctl fancurve set 5 70 80 85
+
+# Power envelopes (PL1, PL2, cTGP, PPAB in watts)
+loq-ctl powerlimits 65 125 105 25
+
+# Read telemetry JSON
+loq-ctl status
+```
+
+## License
+
+MIT

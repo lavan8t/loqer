@@ -1,0 +1,283 @@
+#!/usr/bin/env python3
+"""
+Loqer Hardware Controller CLI
+Unified management of Lenovo LOQ power modes, MUX, fan curves, battery conservation, and GodMode limits.
+"""
+import sys
+import os
+import glob
+import json
+import subprocess
+
+STATUS_FILE = "/run/user/1000/lenovo-power-status.json"
+LEGION_DIR = "/sys/devices/platform/legion"
+
+# Auto-elevate to root via passwordless sudo if writing hardware registers
+if os.geteuid() != 0 and len(sys.argv) > 1 and sys.argv[1] not in ("-h", "--help", "status", "fancurve"):
+    try:
+        os.execvp("sudo", ["sudo", "-n", "/usr/local/bin/loq-ctl"] + sys.argv[1:])
+    except Exception:
+        pass
+
+def write_node(path, val):
+    val_str = str(val).strip()
+    try:
+        with open(path, "w") as f:
+            f.write(val_str + "\n")
+        return True
+    except Exception:
+        try:
+            cmd = f'echo "{val_str}" > "{path}"'
+            subprocess.run(["sudo", "-n", "/usr/local/bin/loq-hw-write", cmd], check=True, capture_output=True)
+            return True
+        except Exception as se:
+            sys.stderr.write(f"Write failed for {path}: {se}\n")
+            return False
+
+def find_legion_hwmon():
+    matches = glob.glob("/sys/devices/platform/legion/hwmon/hwmon*")
+    if matches:
+        return matches[0]
+    for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
+        name_path = os.path.join(d, "name")
+        if os.path.isfile(name_path):
+            try:
+                with open(name_path, "r") as f:
+                    if f.read().strip() == "legion_hwmon":
+                        return d
+            except Exception:
+                pass
+    return None
+
+def get_legion_profile_path():
+    for p in glob.glob("/sys/class/platform-profile/platform-profile-*"):
+        try:
+            with open(os.path.join(p, "name")) as f:
+                if "lenovo-legion" in f.read():
+                    return os.path.join(p, "profile")
+        except Exception:
+            pass
+    return None
+
+def set_gpu_tgp(ctgp_w, ppab_w):
+    write_node("/sys/devices/platform/legion/gpu_ctgp_powerlimit", ctgp_w)
+    write_node("/sys/devices/platform/legion/gpu_ppab_powerlimit", ppab_w)
+
+PROFILES = {
+    "quiet": ("low-power", "1", "0", 45, 15),
+    "blue": ("low-power", "1", "0", 45, 15),
+    "1": ("low-power", "1", "0", 45, 15),
+    "low-power": ("low-power", "1", "0", 45, 15),
+    "balanced": ("balanced", "2", "0", 60, 20),
+    "white": ("balanced", "2", "0", 60, 20),
+    "2": ("balanced", "2", "0", 60, 20),
+    "performance": ("performance", "3", "0", 105, 25),
+    "red": ("performance", "3", "0", 105, 25),
+    "3": ("performance", "3", "0", 105, 25),
+    "custom": ("custom", "255", "1", 105, 25),
+    "pink": ("custom", "255", "1", 105, 25),
+    "extreme": ("custom", "255", "1", 105, 25),
+    "255": ("custom", "255", "1", 105, 25),
+}
+
+def set_profile(p):
+    p = p.lower().strip()
+    config = PROFILES.get(p, PROFILES["balanced"])
+    prof_name, powermode, fullspeed, ctgp, ppab = config
+    
+    legion_p = get_legion_profile_path()
+    if legion_p:
+        write_node(legion_p, prof_name)
+    else:
+        write_node(os.path.join(LEGION_DIR, "powermode"), powermode)
+        
+    write_node(os.path.join(LEGION_DIR, "fan_fullspeed"), fullspeed)
+    set_gpu_tgp(ctgp, ppab)
+
+    try:
+        canonical = "custom" if prof_name == "custom" else ("performance" if prof_name == "performance" else ("quiet" if prof_name == "low-power" else "balanced"))
+        subprocess.Popen(["/usr/local/bin/loq-generate-icon", canonical], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+
+def set_mux(m):
+    m = m.lower().strip()
+    path = os.path.join(LEGION_DIR, "igpumode")
+    modes = {"dedicated": "0", "dgpu": "0", "0": "0", "igpu": "1", "intel": "1", "1": "1", "hybrid": "2", "auto": "2", "2": "2"}
+    if m in modes:
+        write_node(path, modes[m])
+
+def set_ideapad_attribute(attr, val):
+    val = str(val).strip().lower()
+    paths = [
+        f"/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/{attr}",
+        f"/sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/{attr}"
+    ] + glob.glob(f"/sys/bus/platform/drivers/ideapad_acpi/*/{attr}")
+
+    target_path = next((p for p in paths if os.path.exists(p)), None)
+    if not target_path:
+        return False
+
+    cur = "0"
+    try:
+        with open(target_path) as f:
+            cur = f.read().strip()
+    except Exception:
+        pass
+
+    new_val = ("0" if cur == "1" else "1") if val in ("toggle", "") else ("1" if val in ("1", "on", "true", "enable") else "0")
+    return write_node(target_path, new_val)
+
+def toggle_bool(sysfs_path, state_str=None):
+    if not os.path.exists(sysfs_path):
+        return
+    cur = ""
+    try:
+        with open(sysfs_path) as f: cur = f.read().strip()
+    except Exception: pass
+
+    new_val = ("0" if cur == "1" else "1") if (state_str is None or state_str in ("toggle", "")) else ("1" if state_str in ("1", "on", "true") else "0")
+    write_node(sysfs_path, new_val)
+
+CURVE_PRESETS = {
+    "quiet": [{"step": s, "temp": 50 + s*5, "pwm1": max(0, (s-1)*11), "pwm2": max(0, (s-1)*11)} for s in range(1, 11)],
+    "balanced": [
+        {"step": 1, "temp": 45, "pwm1": 20, "pwm2": 25},
+        {"step": 2, "temp": 52, "pwm1": 30, "pwm2": 35},
+        {"step": 3, "temp": 58, "pwm1": 42, "pwm2": 45},
+        {"step": 4, "temp": 65, "pwm1": 55, "pwm2": 55},
+        {"step": 5, "temp": 72, "pwm1": 65, "pwm2": 65},
+        {"step": 6, "temp": 78, "pwm1": 75, "pwm2": 75},
+        {"step": 7, "temp": 84, "pwm1": 85, "pwm2": 85},
+        {"step": 8, "temp": 90, "pwm1": 90, "pwm2": 90},
+        {"step": 9, "temp": 94, "pwm1": 95, "pwm2": 95},
+        {"step": 10, "temp": 98, "pwm1": 100, "pwm2": 100}
+    ],
+    "performance": [
+        {"step": 1, "temp": 40, "pwm1": 30, "pwm2": 35},
+        {"step": 2, "temp": 48, "pwm1": 45, "pwm2": 50},
+        {"step": 3, "temp": 55, "pwm1": 60, "pwm2": 65},
+        {"step": 4, "temp": 62, "pwm1": 70, "pwm2": 75},
+        {"step": 5, "temp": 70, "pwm1": 80, "pwm2": 85},
+        {"step": 6, "temp": 75, "pwm1": 90, "pwm2": 90},
+        {"step": 7, "temp": 80, "pwm1": 95, "pwm2": 95},
+        {"step": 8, "temp": 85, "pwm1": 100, "pwm2": 100},
+        {"step": 9, "temp": 90, "pwm1": 100, "pwm2": 100},
+        {"step": 10, "temp": 95, "pwm1": 100, "pwm2": 100}
+    ],
+    "max": [{"step": s, "temp": 20 + s*8, "pwm1": 100, "pwm2": 100} for s in range(1, 11)]
+}
+
+def apply_fan_points(points):
+    hwmon = find_legion_hwmon()
+    if not hwmon:
+        return False
+    write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "1")
+
+    for pt in points:
+        step = int(pt.get("step", 1))
+        temp = int(pt.get("temp", 50))
+        pwm1_raw = int(round(int(pt.get("pwm1", 50)) * 1.27))
+        pwm2_raw = int(round(int(pt.get("pwm2", 50)) * 1.27))
+
+        for prefix, raw in (("pwm1", pwm1_raw), ("pwm2", pwm2_raw)):
+            t_path = os.path.join(hwmon, f"{prefix}_auto_point{step}_temp")
+            p_path = os.path.join(hwmon, f"{prefix}_auto_point{step}_pwm")
+            if os.path.exists(t_path): write_node(t_path, temp)
+            if os.path.exists(p_path): write_node(p_path, raw)
+
+    return True
+
+def handle_fancurve(args):
+    if not args:
+        print("Usage: loq-ctl fancurve [preset <name>|get|set <step> <temp> <pwm1> <pwm2>|auto]")
+        return
+    sub = args[0].lower()
+    if sub == "preset" and len(args) > 1:
+        preset_name = args[1].lower()
+        if preset_name in CURVE_PRESETS:
+            apply_fan_points(CURVE_PRESETS[preset_name])
+            print(f"Applied fan preset: {preset_name}")
+        elif preset_name in ("auto", "default", "rom"):
+            write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
+            print("Reset to EC Auto fan control (unlocked).")
+    elif sub in ("auto", "reset"):
+        write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
+        print("Reset to EC Auto fan control (unlocked).")
+    elif sub == "get":
+        hwmon = find_legion_hwmon()
+        if not hwmon:
+            print("[]")
+            return
+        points = []
+        for step in range(1, 11):
+            t_path = os.path.join(hwmon, f"pwm1_auto_point{step}_temp")
+            p1_path = os.path.join(hwmon, f"pwm1_auto_point{step}_pwm")
+            p2_path = os.path.join(hwmon, f"pwm2_auto_point{step}_pwm")
+            temp = int(open(t_path).read().strip()) if os.path.exists(t_path) else 0
+            p1_raw = int(open(p1_path).read().strip()) if os.path.exists(p1_path) else 0
+            p2_raw = int(open(p2_path).read().strip()) if os.path.exists(p2_path) else 0
+            points.append({"step": step, "temp": temp, "pwm1": min(100, int(round(p1_raw / 1.27))), "pwm2": min(100, int(round(p2_raw / 1.27)))})
+        print(json.dumps(points))
+    elif sub == "set" and len(args) >= 5:
+        apply_fan_points([{"step": int(args[1]), "temp": int(args[2]), "pwm1": int(args[3]), "pwm2": int(args[4])}])
+        print(f"Set fan point {args[1]}: {args[2]}°C, CPU {args[3]}%, GPU {args[4]}%")
+
+def set_kbd(val):
+    val = str(val).strip().lower()
+    path = "/sys/devices/platform/legion/leds/platform::kbd_backlight_1/brightness"
+    levels = {"0": "0", "off": "0", "1": "1", "low": "1", "2": "2", "high": "2"}
+    if val in levels:
+        write_node(path, levels[val])
+    else:
+        try: cur = int(open(path).read().strip())
+        except Exception: cur = 0
+        write_node(path, str((cur + 1) % 3))
+
+def set_refresh(val):
+    rate = "60" if str(val).strip().lower() in ("60", "save", "low") else "144"
+    subprocess.run(["/home/lavan/.local/bin/set-panel-refresh", rate], check=False)
+
+def set_powerlimits(args):
+    if not args:
+        return
+    pl1 = args[0]
+    pl2 = args[1] if len(args) > 1 else str(int(pl1) * 2)
+    write_node("/sys/devices/platform/legion/cpu_longterm_powerlimit", pl1)
+    write_node("/sys/devices/platform/legion/cpu_shortterm_powerlimit", pl2)
+    if len(args) > 2: write_node("/sys/devices/platform/legion/gpu_ctgp_powerlimit", args[2])
+    if len(args) > 3: write_node("/sys/devices/platform/legion/gpu_ppab_powerlimit", args[3])
+
+def main():
+    if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
+        print("Usage: loq-ctl [profile|mux|fancurve|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|status] [value...]")
+        return
+
+    cmd = sys.argv[1].lower()
+    args = sys.argv[2:]
+
+    dispatch = {
+        "profile": lambda: set_profile(args[0] if args else ""),
+        "mux": lambda: set_mux(args[0] if args else ""),
+        "igpumode": lambda: set_mux(args[0] if args else ""),
+        "fancurve": lambda: handle_fancurve(args),
+        "fan": lambda: handle_fancurve(args),
+        "conservation": lambda: set_ideapad_attribute("conservation_mode", args[0] if args else ""),
+        "fn_lock": lambda: set_ideapad_attribute("fn_lock", args[0] if args else ""),
+        "fnlock": lambda: set_ideapad_attribute("fn_lock", args[0] if args else ""),
+        "fan_fullspeed": lambda: toggle_bool(os.path.join(LEGION_DIR, "fan_fullspeed"), args[0] if args else ""),
+        "touchpad": lambda: toggle_bool(os.path.join(LEGION_DIR, "touchpad"), args[0] if args else ""),
+        "winkey": lambda: toggle_bool(os.path.join(LEGION_DIR, "winkey"), args[0] if args else ""),
+        "overdrive": lambda: toggle_bool(os.path.join(LEGION_DIR, "overdrive"), args[0] if args else ""),
+        "kbd": lambda: set_kbd(args[0] if args else ""),
+        "ioport": lambda: toggle_bool("/sys/devices/platform/legion/leds/platform::ioport/brightness", args[0] if args else ""),
+        "refresh": lambda: set_refresh(args[0] if args else ""),
+        "powerlimits": lambda: set_powerlimits(args),
+        "status": lambda: print(open(STATUS_FILE).read()) if os.path.exists(STATUS_FILE) else None
+    }
+
+    if cmd in dispatch:
+        dispatch[cmd]()
+
+if __name__ == "__main__":
+    main()

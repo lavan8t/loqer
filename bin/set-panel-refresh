@@ -1,0 +1,56 @@
+#!/bin/bash
+# Switch internal laptop panel refresh rate in Hyprland
+set -euo pipefail
+
+TARGET_RATE="${1:-native}" # 60 or native/144
+
+USER_NAME="${SUDO_USER:-lavan}"
+USER_ID="$(id -u "$USER_NAME" 2>/dev/null || echo 1000)"
+USER_RUNTIME="/run/user/$USER_ID"
+
+export XDG_RUNTIME_DIR="${XDG_RUNTIME_DIR:-$USER_RUNTIME}"
+
+if [ -z "${HYPRLAND_INSTANCE_SIGNATURE:-}" ] && [ -d "$USER_RUNTIME/hypr" ]; then
+    HYPRLAND_INSTANCE_SIGNATURE="$(find "$USER_RUNTIME/hypr" -maxdepth 1 -mindepth 1 -type d -exec basename {} \; 2>/dev/null | head -n 1 || true)"
+    export HYPRLAND_INSTANCE_SIGNATURE
+fi
+
+if [ -z "${WAYLAND_DISPLAY:-}" ]; then
+    WAYLAND_DISPLAY="$(find "$USER_RUNTIME" -maxdepth 1 -name 'wayland-*' -exec basename {} \; 2>/dev/null | head -n 1 || true)"
+    export WAYLAND_DISPLAY
+fi
+
+MONITOR_NAME="eDP-1"
+RES="1920x1080"
+POS="0x0"
+SCALE="1"
+
+case "$TARGET_RATE" in
+    60)
+        MODE_STR="${RES}@60"
+        EVAL_MODE="1920x1080@60.00"
+        ;;
+    native|144|max)
+        MODE_STR="${RES}@144"
+        EVAL_MODE="1920x1080@144.00"
+        ;;
+    *)
+        echo "Usage: $0 [60|native]" >&2
+        exit 1
+        ;;
+esac
+
+run_hyprctl() {
+    if [ "$(id -u)" -eq 0 ]; then
+        runuser -u "$USER_NAME" -- env \
+            XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
+            WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
+            HYPRLAND_INSTANCE_SIGNATURE="$HYPRLAND_INSTANCE_SIGNATURE" \
+            hyprctl "$@"
+    else
+        hyprctl "$@"
+    fi
+}
+
+run_hyprctl eval "hl.monitor({ output = \"$MONITOR_NAME\", mode = \"$EVAL_MODE\", position = \"$POS\", scale = $SCALE })" >/dev/null 2>&1 || true
+run_hyprctl keyword monitor "$MONITOR_NAME,$MODE_STR,$POS,$SCALE" >/dev/null 2>&1 || true

@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=Loqer
+GenericName=Lenovo LOQ Hardware Control
+Comment=Lenovo LOQ Hardware Control, Fan Curves, GPU MUX Switch & Power Management
+Exec=loqer
+Icon=loqer
+Terminal=false
+Type=Application
+Categories=Settings;HardwareSettings;System;
+StartupNotify=true
+StartupWMClass=quickshell
+Keywords=Lenovo;Legion;LOQ;loqer;Fan;Power;Battery;Control;Center;MUX;GPU;

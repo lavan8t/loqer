@@ -1,0 +1,13 @@
+[Unit]
+Description=Enable Lenovo LOQ Native Fn+Q Custom Mode in Firmware CMOS
+DefaultDependencies=no
+After=local-fs.target
+Before=sysinit.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/bin/python3 -c "import os; fd = os.open('/dev/port', os.O_RDWR); os.lseek(fd, 0x72, os.SEEK_SET); os.write(fd, bytes([0x7A])); os.lseek(fd, 0x73, os.SEEK_SET); os.write(fd, bytes([1])); os.close(fd)"
+
+[Install]
+WantedBy=sysinit.target
