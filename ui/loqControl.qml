@@ -785,29 +785,57 @@ ApplicationWindow {
                                 onPaint: {
                                     let ctx = getContext("2d");
                                     ctx.reset();
-                                    let cx = width / 2;
-                                    let cy = height / 2;
-                                    let rOut = 31;
-                                    let rIn = 31 - bigLoqRing.ringThickness;
-                                    let cutWidth = 6.2; // uniform parallel rectangular slot width
+                                    let cx = width / 2.0;
+                                    let cy = height / 2.0;
+                                    let rOut = 31.0;
+                                    let thickness = bigLoqRing.ringThickness;
+                                    let rIn = rOut - thickness;
+                                    let w = 5.6; // exact equal slit length for inner and outer ring
 
-                                    // 1. Draw solid donut ring
-                                    ctx.beginPath();
-                                    ctx.arc(cx, cy, rOut, 0, 2 * Math.PI, false);
-                                    ctx.arc(cx, cy, rIn, 2 * Math.PI, 0, true);
-                                    ctx.closePath();
                                     ctx.fillStyle = bigLoqRing.ringColor;
-                                    ctx.fill();
 
-                                    // 2. Cut 3 parallel rectangular slots (rectangle cuts, not angular)
-                                    ctx.globalCompositeOperation = "destination-out";
-                                    let angles = [90 * Math.PI / 180, 210 * Math.PI / 180, 330 * Math.PI / 180];
-                                    for (let a of angles) {
-                                        ctx.save();
-                                        ctx.translate(cx, cy);
-                                        ctx.rotate(a);
-                                        ctx.fillRect(-cutWidth / 2, 0, cutWidth, rOut + 4);
-                                        ctx.restore();
+                                    let pairs = [[330, 450], [90, 210], [210, 330]];
+
+                                    for (let pair of pairs) {
+                                        let a_start = pair[0];
+                                        let a_end = pair[1];
+
+                                        let rad_s = (a_start % 360) * Math.PI / 180.0;
+                                        let u_s_x = Math.cos(rad_s), u_s_y = Math.sin(rad_s);
+                                        let n_s_x = -Math.sin(rad_s), n_s_y = Math.cos(rad_s);
+                                        let d_out_s = Math.sqrt(rOut*rOut - (w/2)*(w/2));
+                                        let d_in_s = Math.sqrt(rIn*rIn - (w/2)*(w/2));
+
+                                        let rad_e = (a_end % 360) * Math.PI / 180.0;
+                                        let u_e_x = Math.cos(rad_e), u_e_y = Math.sin(rad_e);
+                                        let n_e_x = -Math.sin(rad_e), n_e_y = Math.cos(rad_e);
+                                        let d_out_e = Math.sqrt(rOut*rOut - (w/2)*(w/2));
+                                        let d_in_e = Math.sqrt(rIn*rIn - (w/2)*(w/2));
+
+                                        let p_out_s_x = cx + d_out_s * u_s_x + (w/2) * n_s_x;
+                                        let p_out_s_y = cy + d_out_s * u_s_y + (w/2) * n_s_y;
+                                        let p_in_s_x  = cx + d_in_s  * u_s_x + (w/2) * n_s_x;
+                                        let p_in_s_y  = cy + d_in_s  * u_s_y + (w/2) * n_s_y;
+
+                                        let p_out_e_x = cx + d_out_e * u_e_x - (w/2) * n_e_x;
+                                        let p_out_e_y = cy + d_out_e * u_e_y - (w/2) * n_e_y;
+                                        let p_in_e_x  = cx + d_in_e  * u_e_x - (w/2) * n_e_x;
+                                        let p_in_e_y  = cy + d_in_e  * u_e_y - (w/2) * n_e_y;
+
+                                        let ang_s_out = Math.atan2(p_out_s_y - cy, p_out_s_x - cx);
+                                        let ang_e_out = Math.atan2(p_out_e_y - cy, p_out_e_x - cx);
+                                        if (ang_e_out < ang_s_out) ang_e_out += 2 * Math.PI;
+
+                                        let ang_s_in = Math.atan2(p_in_s_y - cy, p_in_s_x - cx);
+                                        let ang_e_in = Math.atan2(p_in_e_y - cy, p_in_e_x - cx);
+                                        if (ang_e_in < ang_s_in) ang_e_in += 2 * Math.PI;
+
+                                        ctx.beginPath();
+                                        ctx.arc(cx, cy, rOut, ang_s_out, ang_e_out, false);
+                                        ctx.lineTo(p_in_e_x, p_in_e_y);
+                                        ctx.arc(cx, cy, rIn, ang_e_in, ang_s_in, true);
+                                        ctx.closePath();
+                                        ctx.fill();
                                     }
                                 }
 
