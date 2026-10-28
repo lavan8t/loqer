@@ -5,7 +5,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "${SCRIPT_DIR}"
 
 echo "============================================="
-echo "  Building Loqer for Windows x64 via MinGW   "
+echo "  Building LOQer for Windows x64 via MinGW   "
 echo "============================================="
 
 # 1. Configure CMake

@@ -1,4 +1,4 @@
--- Hyprland window rules for Loqer
-hl.window_rule({match = {title = "^(Loqer)$" }, float = true})
-hl.window_rule({match = {title = "^(Loqer)$" }, center = true})
-hl.window_rule({match = {title = "^(Loqer)$" }, size = {"1040", "720"} })
+-- Hyprland window rules for LOQer
+hl.window_rule({match = {title = "^(LOQer|Loqer)$" }, float = true})
+hl.window_rule({match = {title = "^(LOQer|Loqer)$" }, center = true})
+hl.window_rule({match = {title = "^(LOQer|Loqer)$" }, size = {"1040", "720"} })

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loqer Uninstallation Script
+# LOQer Uninstallation Script
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -35,4 +35,4 @@ find "$USER_HOME/.local/share/icons/hicolor" -name "loqer.*" -delete 2>/dev/null
 
 su - "$TARGET_USER" -c "update-desktop-database $USER_HOME/.local/share/applications/ 2>/dev/null || true"
 
-echo "=== Loqer uninstalled successfully ==="
+echo "=== LOQer uninstalled successfully ==="

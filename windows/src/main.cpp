@@ -13,7 +13,7 @@ int main(int argc, char *argv[]) {
     qputenv("QS_NO_RELOAD_POPUP", "1");
 
     QGuiApplication app(argc, argv);
-    app.setApplicationName("Loqer");
+    app.setApplicationName("LOQer");
     app.setOrganizationName("lavan8t");
     app.setApplicationVersion("1.1.0");
 

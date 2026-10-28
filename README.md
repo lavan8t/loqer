@@ -1,15 +1,15 @@
 <p align="center">
-  <img src="assets/loqer.svg" width="128" height="128" alt="Loqer logo">
+  <img src="assets/loqer.svg" width="128" height="128" alt="LOQer logo">
 </p>
 
-# Loqer
+# LOQer
 
 [![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x64-blue.svg)](https://github.com/lavan8t/loqer)
 [![UI](https://img.shields.io/badge/ui-Material%203%20QML-6750A4.svg)](https://github.com/lavan8t/loqer)
 [![CI/CD](https://github.com/lavan8t/loqer/actions/workflows/ci.yml/badge.svg)](https://github.com/lavan8t/loqer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Loqer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux and Windows.
+LOQer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux and Windows.
 
 On Linux, the project pairs a background daemon with a standalone Quickshell desktop window and a command-line tool named `loq-ctl`. On Windows, a minified native C++ Qt host embeds the exact 1:1 Material 3 frontend and Google Sans Flex variable font with zero rewrite, interfacing directly with Lenovo ACPI WMI and Win32 firmware APIs under the hood.
 
@@ -42,7 +42,7 @@ The daemon writes directly to the `legion_hwmon` sysfs attributes `pwm1_auto_poi
 
 ### UEFI Boot Logo Changer
 
-Loqer supports Lenovo's native InsydeH2O UEFI DIY Boot Logo mechanism (as supported on LOQ 15IAX9 and Legion models):
+LOQer supports Lenovo's native InsydeH2O UEFI DIY Boot Logo mechanism (as supported on LOQ 15IAX9 and Legion models):
 - Auto-fits, centers, and pads images onto the display canvas (up to 1920x1080).
 - Validates formats (PNG, JPG, BMP) and firmware buffer limits (under 1.5MB).
 - Updates UEFI variables `LBLDESP` and `LBLDVC` (SHA256 / CRC32 integrity checksums) via kernel efivars.
@@ -158,7 +158,7 @@ loq-ctl status
 
 ## Windows Native Host & Cross-Compilation
 
-Loqer provides a native C++ Windows host (`windows/`) that embeds the exact 1:1 Material 3 QML frontend and variable font into a minified, standalone Windows executable (`loqer.exe`).
+LOQer provides a native C++ Windows host (`windows/`) that embeds the exact 1:1 Material 3 QML frontend and variable font into a minified, standalone Windows executable (`loqer.exe`).
 
 ### Building on Fedora (MinGW Cross-Compilation)
 

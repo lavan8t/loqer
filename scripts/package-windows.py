@@ -45,7 +45,7 @@ def main():
         print(f"Error: {exe_src} not found. Please build first.")
         sys.exit(1)
 
-    print(f"[*] Packaging Loqer Windows x64 into {package_dir}...")
+    print(f"[*] Packaging LOQer Windows x64 into {package_dir}...")
     if os.path.exists(package_dir):
         shutil.rmtree(package_dir)
     os.makedirs(package_dir, exist_ok=True)

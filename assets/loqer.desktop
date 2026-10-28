@@ -1,5 +1,5 @@
 [Desktop Entry]
-Name=Loqer
+Name=LOQer
 GenericName=Lenovo LOQ Hardware Control
 Comment=Lenovo LOQ Hardware Control, Fan Curves, GPU MUX Switch & Power Management
 Exec=loqer

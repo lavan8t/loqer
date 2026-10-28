@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Loqer Hardware Controller CLI
+LOQer Hardware Controller CLI
 Unified management of Lenovo LOQ power modes, MUX, fan curves, battery conservation, and GodMode limits.
 """
 import sys

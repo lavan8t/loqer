@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Loqer Main GUI Launcher
+# LOQer Main GUI Launcher
 # Discovers loqControl.qml across system and local install paths
 set -euo pipefail
 
@@ -33,7 +33,7 @@ fi
 
 if ! command -v qs >/dev/null 2>&1; then
     echo "Error: 'qs' (quickshell) is not installed or not in PATH." >&2
-    echo "Please install quickshell to run the Loqer graphical interface." >&2
+    echo "Please install quickshell to run the LOQer graphical interface." >&2
     exit 1
 fi
 

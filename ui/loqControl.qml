@@ -20,7 +20,7 @@ ApplicationWindow {
     property real contentPadding: 8
     visible: true
     onClosing: Qt.quit()
-    title: "Loqer"
+    title: "LOQer"
 
     FontLoader {
         id: fontGoogleSans
@@ -28,7 +28,7 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
-        console.log("Loqer GoogleSans font loaded:", fontGoogleSans.name, "status:", fontGoogleSans.status);
+        console.log("LOQer GoogleSans font loaded:", fontGoogleSans.name, "status:", fontGoogleSans.status);
         MaterialThemeLoader.reapplyTheme();
         loadCurveProc.running = true;
         bootlogoStatusProc.running = true;
@@ -371,7 +371,7 @@ ApplicationWindow {
                     leftMargin: 12
                 }
                 color: Appearance.colors.colOnLayer0
-                text: "Loqer"
+                text: "LOQer"
                 font {
                     family: Appearance.font.family.title
                     pixelSize: Appearance.font.pixelSize.title

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
-# Loqer Multi-Distro Installation Script
-# Installs Loqer binaries, Quickshell UI, bundled fonts, systemd services, shutdown hooks, and desktop integrations.
+# LOQer Multi-Distro Installation Script
+# Installs LOQer binaries, Quickshell UI, bundled fonts, systemd services, shutdown hooks, and desktop integrations.
 set -euo pipefail
 
 if [ "$(id -u)" -ne 0 ]; then
@@ -12,7 +12,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 TARGET_USER="${SUDO_USER:-$USER}"
 USER_HOME="$(getent passwd "$TARGET_USER" | cut -d: -f6 || echo "/home/$TARGET_USER")"
 
-echo "=== 1. Installing Loqer Core Binaries ==="
+echo "=== 1. Installing LOQer Core Binaries ==="
 install -m 755 "$SCRIPT_DIR/bin/loqer" /usr/local/bin/loqer
 install -m 755 "$SCRIPT_DIR/bin/loq-ctl" /usr/local/bin/loq-ctl
 install -m 755 "$SCRIPT_DIR/bin/loq-hw-write" /usr/local/bin/loq-hw-write
