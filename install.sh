@@ -27,18 +27,12 @@ chown -R "$TARGET_USER:" "$USER_HOME/.local/bin"
 
 echo "=== 2. Installing Quickshell Standalone UI & Bundled Fonts ==="
 # System-wide UI files
-mkdir -p /usr/local/share/loqer/ui/fonts
-install -m 644 "$SCRIPT_DIR/ui/loqControl.qml" /usr/local/share/loqer/ui/loqControl.qml
-if [ -f "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" ]; then
-    install -m 644 "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" /usr/local/share/loqer/ui/fonts/GoogleSansFlex.ttf
-fi
+mkdir -p /usr/local/share/loqer/ui
+cp -r "$SCRIPT_DIR/ui/"* /usr/local/share/loqer/ui/
 
 # User-space fallback paths
-mkdir -p "$USER_HOME/.local/share/loqer/ui/fonts"
-install -m 644 "$SCRIPT_DIR/ui/loqControl.qml" "$USER_HOME/.local/share/loqer/ui/loqControl.qml"
-if [ -f "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" ]; then
-    install -m 644 "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" "$USER_HOME/.local/share/loqer/ui/fonts/GoogleSansFlex.ttf"
-fi
+mkdir -p "$USER_HOME/.local/share/loqer/ui"
+cp -r "$SCRIPT_DIR/ui/"* "$USER_HOME/.local/share/loqer/ui/"
 
 # Quickshell legacy integration path
 mkdir -p "$USER_HOME/.config/quickshell/ii/fonts"

@@ -60,6 +60,8 @@ loqer/
 │   └── set-panel-refresh      # Multi-DE internal panel refresh rate script
 ├── ui/
 │   ├── loqControl.qml         # Standalone Material 3 desktop window
+│   ├── modules/               # Bundled Quickshell Material 3 component library
+│   ├── services/              # Bundled MaterialThemeLoader service
 │   └── fonts/                 # Bundled Google Sans Flex variable font
 ├── assets/
 │   ├── loqer.desktop          # Application launcher entry

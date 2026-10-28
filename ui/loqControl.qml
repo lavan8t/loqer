@@ -10,6 +10,10 @@ import QtQuick.Window
 import QtQuick.Shapes
 import Quickshell
 import Quickshell.Io
+import "./modules/common"
+import "./modules/common/widgets"
+import "./modules/common/functions" as CF
+import "./services"
 
 ApplicationWindow {
     id: root
@@ -18,8 +22,13 @@ ApplicationWindow {
     onClosing: Qt.quit()
     title: "Loqer"
 
+    FontLoader {
+        id: fontGoogleSans
+        source: Qt.resolvedUrl("fonts/GoogleSansFlex.ttf")
+    }
+
     Component.onCompleted: {
-        root.loadGeneratedTheme();
+        MaterialThemeLoader.reapplyTheme();
         loadCurveProc.running = true;
         root.reloadStatus();
     }
@@ -28,397 +37,7 @@ ApplicationWindow {
     minimumHeight: 580
     width: 1040
     height: 720
-    color: m3theme.background
-
-    FontLoader {
-        id: fontGoogleSans
-        source: Qt.resolvedUrl("fonts/GoogleSansFlex.ttf")
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // MATERIAL DESIGN 3 SELF-CONTAINED THEME (ZERO DOTFILE DEPENDENCIES)
-    // ══════════════════════════════════════════════════════════════════════
-    QtObject {
-        id: m3theme
-        property color background: "#101418"
-        property color surface: "#101418"
-        property color surfaceContainerLowest: "#0b0e12"
-        property color surfaceContainerLow: "#181c20"
-        property color surfaceContainer: "#1d2024"
-        property color surfaceContainerHigh: "#272a2f"
-        property color surfaceContainerHighest: "#32353a"
-        property color textPrimary: "#e0e2e8"
-        property color textSecondary: "#c2c7cf"
-        property color outline: "#8c9199"
-        property color outlineVariant: "#42474e"
-        property color primary: "#9dcbfb"
-        property color textOnPrimary: "#003355"
-        property color primaryContainer: "#134a73"
-        property color textOnPrimaryContainer: "#cfe5ff"
-        property color secondary: "#bac8da"
-        property color textOnSecondary: "#243240"
-        property color subtext: "#8c9199"
-
-        readonly property int roundingSmall: 8
-        readonly property int roundingMedium: 16
-        readonly property int roundingLarge: 24
-        readonly property int roundingFull: 9999
-        readonly property int windowRounding: 18
-
-        readonly property string fontFamily: (fontGoogleSans.status === FontLoader.Ready && fontGoogleSans.name) ? fontGoogleSans.name : "Google Sans Flex, system-ui, -apple-system, sans-serif"
-        readonly property string iconFontFamily: "Material Symbols Rounded"
-    }
-
-    // ══════════════════════════════════════════════════════════════════════
-    // SELF-CONTAINED MATERIAL 3 COMPONENTS
-    // ══════════════════════════════════════════════════════════════════════
-    component M3Text: Text {
-        font.family: m3theme.fontFamily
-        font.pixelSize: 13
-        color: m3theme.textPrimary
-        renderType: Text.NativeRendering
-    }
-
-    component M3Icon: Text {
-        property real iconSize: 20
-        font.family: m3theme.iconFontFamily
-        font.pixelSize: iconSize
-        font.weight: Font.Bold
-        color: m3theme.textPrimary
-        renderType: Text.NativeRendering
-        horizontalAlignment: Text.AlignHCenter
-        verticalAlignment: Text.AlignVCenter
-    }
-
-    component M3Button: Rectangle {
-        id: btnRoot
-        property alias text: btnLabel.text
-        property alias icon: btnIcon.text
-        property bool toggled: false
-        property color colBg: toggled ? m3theme.primaryContainer : (mouseArea.containsMouse ? m3theme.surfaceContainerHigh : m3theme.surfaceContainer)
-        property color colFg: toggled ? m3theme.textOnPrimaryContainer : m3theme.textPrimary
-        signal clicked()
-
-        implicitWidth: btnRow.implicitWidth + 24
-        implicitHeight: 36
-        radius: m3theme.roundingSmall
-        color: colBg
-        Behavior on color { ColorAnimation { duration: 150 } }
-
-        RowLayout {
-            id: btnRow
-            anchors.centerIn: parent
-            spacing: 8
-            M3Icon {
-                id: btnIcon
-                visible: text !== ""
-                iconSize: 18
-                color: btnRoot.colFg
-            }
-            M3Text {
-                id: btnLabel
-                visible: text !== ""
-                text: ""
-                font.weight: btnRoot.toggled ? Font.Bold : Font.Medium
-                color: btnRoot.colFg
-            }
-        }
-        MouseArea {
-            id: mouseArea
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: btnRoot.clicked()
-        }
-    }
-
-    component M3SegmentedControl: Rectangle {
-        id: segRoot
-        property var options: []
-        property var currentValue
-        signal selected(var val)
-
-        Layout.fillWidth: true
-        implicitHeight: 40
-        radius: m3theme.roundingSmall
-        color: m3theme.surfaceContainerLowest
-        clip: true
-
-        RowLayout {
-            anchors.fill: parent
-            spacing: 2
-            anchors.margins: 2
-
-            Repeater {
-                model: segRoot.options
-                delegate: Rectangle {
-                    required property var modelData
-                    required property int index
-                    readonly property bool isSelected: String(segRoot.currentValue) === String(modelData.value)
-
-                    Layout.fillWidth: true
-                    Layout.fillHeight: true
-                    radius: m3theme.roundingSmall - 2
-                    color: isSelected ? (modelData.activeBg || m3theme.primaryContainer) : (itemMouse.containsMouse ? m3theme.surfaceContainerHigh : "transparent")
-                    Behavior on color { ColorAnimation { duration: 120 } }
-
-                    RowLayout {
-                        anchors.centerIn: parent
-                        spacing: 6
-                        M3Icon {
-                            visible: !!modelData.icon
-                            text: modelData.icon ?? ""
-                            iconSize: 16
-                            color: isSelected ? (modelData.activeFg || m3theme.textOnPrimaryContainer) : m3theme.textSecondary
-                        }
-                        M3Text {
-                            text: modelData.displayName ?? ""
-                            font.weight: isSelected ? Font.Bold : Font.Normal
-                            font.pixelSize: 12
-                            color: isSelected ? (modelData.activeFg || m3theme.textOnPrimaryContainer) : m3theme.textPrimary
-                        }
-                    }
-
-                    MouseArea {
-                        id: itemMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: segRoot.selected(modelData.value)
-                    }
-                }
-            }
-        }
-    }
-
-    component M3Switch: Rectangle {
-        id: switchRoot
-        property string icon: ""
-        property string title: ""
-        property string subtitle: ""
-        property bool checked: false
-        signal toggled(bool newState)
-
-        Layout.fillWidth: true
-        implicitHeight: 48
-        radius: m3theme.roundingSmall
-        color: switchMouse.containsMouse ? m3theme.surfaceContainerHigh : m3theme.surfaceContainer
-        Behavior on color { ColorAnimation { duration: 150 } }
-
-        RowLayout {
-            anchors {
-                fill: parent
-                leftMargin: 12
-                rightMargin: 12
-            }
-            spacing: 12
-
-            M3Icon {
-                visible: switchRoot.icon !== ""
-                text: switchRoot.icon
-                iconSize: 20
-                color: switchRoot.checked ? m3theme.primary : m3theme.subtext
-            }
-
-            ColumnLayout {
-                Layout.fillWidth: true
-                spacing: 2
-                M3Text {
-                    text: switchRoot.title
-                    font.weight: Font.Medium
-                    font.pixelSize: 13
-                    color: m3theme.textPrimary
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-                M3Text {
-                    visible: switchRoot.subtitle !== ""
-                    text: switchRoot.subtitle
-                    font.pixelSize: 11
-                    color: m3theme.subtext
-                    Layout.fillWidth: true
-                    elide: Text.ElideRight
-                }
-            }
-
-            Rectangle {
-                width: 44
-                height: 24
-                radius: 12
-                color: switchRoot.checked ? m3theme.primary : m3theme.surfaceContainerHighest
-                Behavior on color { ColorAnimation { duration: 150 } }
-
-                Rectangle {
-                    x: switchRoot.checked ? 22 : 2
-                    y: 2
-                    width: 20
-                    height: 20
-                    radius: 10
-                    color: switchRoot.checked ? m3theme.textOnPrimary : m3theme.outline
-                    Behavior on x { NumberAnimation { duration: 150; easing.type: Easing.OutCubic } }
-                }
-            }
-        }
-
-        MouseArea {
-            id: switchMouse
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-            onClicked: {
-                switchRoot.checked = !switchRoot.checked;
-                switchRoot.toggled(switchRoot.checked);
-            }
-        }
-    }
-
-    component M3Slider: Item {
-        id: sliderRoot
-        property real from: 0
-        property real to: 100
-        property real stepSize: 1
-        property real value: 50
-        signal moved(real val)
-
-        implicitHeight: 28
-        Layout.fillWidth: true
-
-        Rectangle {
-            id: track
-            anchors {
-                left: parent.left
-                right: parent.right
-                verticalCenter: parent.verticalCenter
-            }
-            height: 6
-            radius: 3
-            color: m3theme.surfaceContainerHighest
-
-            Rectangle {
-                anchors {
-                    left: parent.left
-                    top: parent.top
-                    bottom: parent.bottom
-                }
-                width: Math.max(0, Math.min(track.width, (sliderRoot.value - sliderRoot.from) / (sliderRoot.to - sliderRoot.from) * track.width))
-                radius: 3
-                color: m3theme.primary
-            }
-        }
-
-        Rectangle {
-            id: thumb
-            width: 18
-            height: 18
-            radius: 9
-            color: m3theme.primary
-            anchors.verticalCenter: parent.verticalCenter
-            x: Math.max(0, Math.min(sliderRoot.width - width, (sliderRoot.value - sliderRoot.from) / (sliderRoot.to - sliderRoot.from) * (sliderRoot.width - width)))
-
-            Rectangle {
-                anchors.centerIn: parent
-                width: 6
-                height: 6
-                radius: 3
-                color: m3theme.textOnPrimary
-            }
-        }
-
-        MouseArea {
-            anchors.fill: parent
-            hoverEnabled: true
-            cursorShape: Qt.PointingHandCursor
-
-            function updateVal(mouseX) {
-                let clamped = Math.max(0, Math.min(width, mouseX));
-                let ratio = clamped / width;
-                let raw = sliderRoot.from + ratio * (sliderRoot.to - sliderRoot.from);
-                let stepped = Math.round(raw / sliderRoot.stepSize) * sliderRoot.stepSize;
-                let finalVal = Math.max(sliderRoot.from, Math.min(sliderRoot.to, stepped));
-                sliderRoot.value = finalVal;
-                sliderRoot.moved(finalVal);
-            }
-
-            onPressed: mouse => updateVal(mouse.x)
-            onPositionChanged: mouse => {
-                if (pressed) updateVal(mouse.x);
-            }
-        }
-    }
-
-    component M3Section: ColumnLayout {
-        property string title: ""
-        property string icon: ""
-        Layout.fillWidth: true
-        spacing: 10
-
-        RowLayout {
-            spacing: 8
-            visible: title !== ""
-            M3Icon {
-                visible: icon !== ""
-                text: icon
-                iconSize: 20
-                color: m3theme.primary
-            }
-            M3Text {
-                text: title
-                font.weight: Font.Bold
-                font.pixelSize: 15
-                color: m3theme.textPrimary
-            }
-        }
-    }
-
-    component M3Subsection: ColumnLayout {
-        property string title: ""
-        property string tooltip: ""
-        Layout.fillWidth: true
-        spacing: 6
-
-        RowLayout {
-            spacing: 6
-            visible: title !== ""
-            M3Text {
-                text: title
-                font.weight: Font.DemiBold
-                font.pixelSize: 13
-                color: m3theme.textSecondary
-            }
-        }
-    }
-
-    component M3Notice: Rectangle {
-        property alias text: noticeText.text
-        property string icon: "info"
-        Layout.fillWidth: true
-        implicitHeight: noticeRow.implicitHeight + 16
-        radius: m3theme.roundingSmall
-        color: m3theme.surfaceContainer
-        clip: true
-
-        RowLayout {
-            id: noticeRow
-            anchors {
-                fill: parent
-                leftMargin: 12
-                rightMargin: 12
-            }
-            spacing: 10
-            M3Icon {
-                text: icon
-                iconSize: 18
-                color: m3theme.primary
-            }
-            M3Text {
-                id: noticeText
-                Layout.fillWidth: true
-                color: m3theme.textPrimary
-                font.pixelSize: 12
-                wrapMode: Text.Wrap
-            }
-        }
-    }
+    color: Appearance.m3colors.m3background
 
     // Navigation Pages definition
     property var pages: [
@@ -503,22 +122,9 @@ ApplicationWindow {
 
     FileView {
         id: statusFile
-        path: (Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") : "/run/user/1000") + "/lenovo-power-status.json"
+        path: "/run/user/1000/lenovo-power-status.json"
         watchChanges: true
         onFileChanged: root.reloadStatus()
-    }
-
-    FileView {
-        id: themeFile
-        path: {
-            let stateHome = Quickshell.env("XDG_STATE_HOME");
-            if (stateHome) return stateHome + "/quickshell/user/generated/colors.json";
-            let home = Quickshell.env("HOME") || "/home/lavan";
-            return home + "/.local/state/quickshell/user/generated/colors.json";
-        }
-        watchChanges: true
-        onLoaded: root.loadGeneratedTheme()
-        onFileChanged: root.loadGeneratedTheme()
     }
 
     Timer {
@@ -557,53 +163,22 @@ ApplicationWindow {
         onTriggered: root.powerLimitsFeedback = false
     }
 
-    function loadGeneratedTheme() {
-        try {
-            let txt = themeFile.text();
-            if (!txt || !txt.trim().startsWith("{")) return;
-            let c = JSON.parse(txt.trim());
-            if (c.background) m3theme.background = c.background;
-            if (c.surface) m3theme.surface = c.surface;
-            if (c.surface_container_lowest) m3theme.surfaceContainerLowest = c.surface_container_lowest;
-            if (c.surface_container_low) m3theme.surfaceContainerLow = c.surface_container_low;
-            if (c.surface_container) m3theme.surfaceContainer = c.surface_container;
-            if (c.surface_container_high) m3theme.surfaceContainerHigh = c.surface_container_high;
-            if (c.surface_container_highest) m3theme.surfaceContainerHighest = c.surface_container_highest;
-            if (c.on_surface) m3theme.textPrimary = c.on_surface;
-            if (c.on_surface_variant) m3theme.textSecondary = c.on_surface_variant;
-            if (c.outline) { m3theme.outline = c.outline; m3theme.subtext = c.outline; }
-            if (c.outline_variant) m3theme.outlineVariant = c.outline_variant;
-            if (c.primary) m3theme.primary = c.primary;
-            if (c.on_primary) m3theme.textOnPrimary = c.on_primary;
-            if (c.primary_container) m3theme.primaryContainer = c.primary_container;
-            if (c.on_primary_container) m3theme.textOnPrimaryContainer = c.on_primary_container;
-            if (c.secondary) m3theme.secondary = c.secondary;
-            if (c.on_secondary) m3theme.textOnSecondary = c.on_secondary;
-        } catch(e) {}
-    }
-
     function reloadStatus() {
         try {
             statusFile.reload();
-            let txt = statusFile.text();
-            if (!txt || !txt.trim().startsWith("{")) {
-                let sysFile = (Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") : "/run/user/1000") + "/lenovo-power-status.json";
-                let f = Io.file(sysFile);
-                if (f) txt = f.read();
-            }
-            if (txt && txt.trim().startsWith("{")) {
-                let parsed = JSON.parse(txt.trim());
-                let oldProfile = root.statusData ? root.statusData.profile : null;
-                root.statusData = parsed;
+            const txt = statusFile.text().trim();
+            if (txt && txt.startsWith("{")) {
+                let oldProfile = root.statusData.profile;
+                root.statusData = JSON.parse(txt);
                 root.statusDataChanged();
-                if (oldProfile && oldProfile !== parsed.profile) {
+                if (oldProfile !== root.statusData.profile) {
                     bigLoqRing.triggerSpin();
                 }
                 if (!root.initializedLimits) {
-                    root.sliderPl1 = parsed.pl1_w ?? 55;
-                    root.sliderPl2 = parsed.pl2_w ?? 115;
-                    root.sliderCtgp = parsed.gpu_ctgp_w ?? 105;
-                    root.sliderPpab = parsed.gpu_ppab_w ?? 25;
+                    root.sliderPl1 = root.statusData.pl1_w ?? 55;
+                    root.sliderPl2 = root.statusData.pl2_w ?? 115;
+                    root.sliderCtgp = root.statusData.gpu_ctgp_w ?? 105;
+                    root.sliderPpab = root.statusData.gpu_ppab_w ?? 25;
                     root.initializedLimits = true;
                 }
             }
@@ -612,32 +187,32 @@ ApplicationWindow {
 
     function executeCommand(action, val) {
         Quickshell.execDetached(["sudo", "-n", "/usr/local/bin/loq-ctl", action, String(val)]);
-        let updated = Object.assign({}, root.statusData);
+        let newStatus = Object.assign({}, root.statusData);
         if (action === "profile") {
-            updated.profile = val;
+            newStatus.profile = val;
             bigLoqRing.triggerSpin();
         } else if (action === "mux") {
-            updated.igpu_mode = parseInt(val);
+            newStatus.igpu_mode = parseInt(val);
         } else if (action === "conservation") {
-            updated.conservation_mode = (val === "1");
+            newStatus.conservation_mode = (val === "1");
         } else if (action === "fn_lock") {
-            updated.fn_lock = (val === "1");
+            newStatus.fn_lock = (val === "1");
         } else if (action === "fan_fullspeed") {
-            updated.fan_fullspeed = (val === "1");
+            newStatus.fan_fullspeed = (val === "1");
         } else if (action === "touchpad") {
-            updated.touchpad = (val === "1");
+            newStatus.touchpad = (val === "1");
         } else if (action === "winkey") {
-            updated.winkey = (val === "1");
+            newStatus.winkey = (val === "1");
         } else if (action === "overdrive") {
-            updated.overdrive = (val === "1");
+            newStatus.overdrive = (val === "1");
         } else if (action === "kbd") {
-            updated.kbd_backlight = parseInt(val);
+            newStatus.kbd_backlight = parseInt(val);
         } else if (action === "ioport") {
-            updated.ioport_light = (val === "1");
+            newStatus.ioport_light = (val === "1");
         } else if (action === "refresh") {
-            updated.display_hz = parseInt(val);
+            newStatus.display_hz = parseInt(val);
         }
-        root.statusData = updated;
+        root.statusData = newStatus;
         root.statusDataChanged();
     }
 
@@ -689,23 +264,27 @@ ApplicationWindow {
         spacing: root.contentPadding
 
         // ══════════════════════════════════════════════════════════════════════
-        // TITLEBAR WITH CLOSE BUTTON
+        // TITLEBAR WITH CONTROLS (MATCHING ILLOGICAL-IMPULSE SETTINGS)
         // ══════════════════════════════════════════════════════════════════════
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: false
-            implicitHeight: 36
+            implicitHeight: Math.max(titleText.implicitHeight, windowControlsRow.implicitHeight)
 
-            M3Text {
+            StyledText {
                 id: titleText
                 anchors {
                     left: parent.left
                     verticalCenter: parent.verticalCenter
                     leftMargin: 12
                 }
+                color: Appearance.colors.colOnLayer0
                 text: "Loqer"
-                font.weight: Font.Bold
-                font.pixelSize: 18
+                font {
+                    family: Appearance.font.family.title
+                    pixelSize: Appearance.font.pixelSize.title
+                    variableAxes: Appearance.font.variableAxes.title
+                }
             }
 
             RowLayout {
@@ -714,32 +293,24 @@ ApplicationWindow {
                 anchors.right: parent.right
                 spacing: 8
 
-                Rectangle {
-                    width: 32
-                    height: 32
-                    radius: 16
-                    color: closeMouse.containsMouse ? m3theme.surfaceContainerHighest : "transparent"
-
-                    M3Icon {
+                // Close Button
+                RippleButton {
+                    buttonRadius: Appearance.rounding.full
+                    implicitWidth: 35
+                    implicitHeight: 35
+                    onClicked: root.close()
+                    contentItem: MaterialSymbol {
                         anchors.centerIn: parent
+                        horizontalAlignment: Text.AlignHCenter
                         text: "close"
-                        iconSize: 18
-                        color: m3theme.textPrimary
-                    }
-
-                    MouseArea {
-                        id: closeMouse
-                        anchors.fill: parent
-                        hoverEnabled: true
-                        cursorShape: Qt.PointingHandCursor
-                        onClicked: root.close()
+                        iconSize: 20
                     }
                 }
             }
         }
 
         // ══════════════════════════════════════════════════════════════════════
-        // MAIN BODY: NAVIGATION SIDEBAR + CONTENT CONTAINER
+        // MAIN BODY: NAVIGATION RAIL + CONTENT CONTAINER
         // ══════════════════════════════════════════════════════════════════════
         RowLayout {
             Layout.fillWidth: true
@@ -772,68 +343,46 @@ ApplicationWindow {
                             width: 64
                             height: 64
 
-                            property real ringThickness: 11.6 // 20% thicker
+                            // 20% thicker rim: (64/2) * 0.3629 = 11.6px
+                            property real ringThickness: 11.6
+                            property real arcRadius: 32 - (ringThickness / 2)
                             property color ringColor: root.getProfileColor(root.statusData.profile)
                             Behavior on ringColor { ColorAnimation { duration: 250; easing.type: Easing.OutCubic } }
 
                             Canvas {
-                                id: loqRingCanvas
+                                id: ringCanvas
                                 anchors.fill: parent
-                                renderTarget: Canvas.FramebufferObject
-                                antialiasing: true
+                                renderTarget: Canvas.Image
+                                renderStrategy: Canvas.Immediate
 
                                 onPaint: {
-                                    let ctx = getContext("2d");
+                                    var ctx = getContext("2d");
                                     ctx.reset();
-                                    let cx = width / 2.0;
-                                    let cy = height / 2.0;
-                                    let rOut = 31.0;
-                                    let thickness = bigLoqRing.ringThickness;
-                                    let rIn = rOut - thickness;
-                                    let w = 5.6; // exact equal slit length for inner and outer ring
+                                    var cx = 32, cy = 32;
+                                    var R_out = 32;
+                                    var thickness = 11.6;
+                                    var R_in = R_out - thickness; // 20.4
+                                    var slit_w = 5.6; // Equal slit length at both inner and outer edge
+
+                                    var d_out = Math.asin(Math.min(1.0, (slit_w / 2) / R_out));
+                                    var d_in = Math.asin(Math.min(1.0, (slit_w / 2) / R_in));
+
+                                    var midAngles = [30 * Math.PI / 180, 150 * Math.PI / 180, 270 * Math.PI / 180];
+                                    var arcSpan = (2 * Math.PI / 3);
 
                                     ctx.fillStyle = bigLoqRing.ringColor;
 
-                                    let pairs = [[330, 450], [90, 210], [210, 330]];
-
-                                    for (let pair of pairs) {
-                                        let a_start = pair[0];
-                                        let a_end = pair[1];
-
-                                        let rad_s = (a_start % 360) * Math.PI / 180.0;
-                                        let u_s_x = Math.cos(rad_s), u_s_y = Math.sin(rad_s);
-                                        let n_s_x = -Math.sin(rad_s), n_s_y = Math.cos(rad_s);
-                                        let d_out_s = Math.sqrt(rOut*rOut - (w/2)*(w/2));
-                                        let d_in_s = Math.sqrt(rIn*rIn - (w/2)*(w/2));
-
-                                        let rad_e = (a_end % 360) * Math.PI / 180.0;
-                                        let u_e_x = Math.cos(rad_e), u_e_y = Math.sin(rad_e);
-                                        let n_e_x = -Math.sin(rad_e), n_e_y = Math.cos(rad_e);
-                                        let d_out_e = Math.sqrt(rOut*rOut - (w/2)*(w/2));
-                                        let d_in_e = Math.sqrt(rIn*rIn - (w/2)*(w/2));
-
-                                        let p_out_s_x = cx + d_out_s * u_s_x + (w/2) * n_s_x;
-                                        let p_out_s_y = cy + d_out_s * u_s_y + (w/2) * n_s_y;
-                                        let p_in_s_x  = cx + d_in_s  * u_s_x + (w/2) * n_s_x;
-                                        let p_in_s_y  = cy + d_in_s  * u_s_y + (w/2) * n_s_y;
-
-                                        let p_out_e_x = cx + d_out_e * u_e_x - (w/2) * n_e_x;
-                                        let p_out_e_y = cy + d_out_e * u_e_y - (w/2) * n_e_y;
-                                        let p_in_e_x  = cx + d_in_e  * u_e_x - (w/2) * n_e_x;
-                                        let p_in_e_y  = cy + d_in_e  * u_e_y - (w/2) * n_e_y;
-
-                                        let ang_s_out = Math.atan2(p_out_s_y - cy, p_out_s_x - cx);
-                                        let ang_e_out = Math.atan2(p_out_e_y - cy, p_out_e_x - cx);
-                                        if (ang_e_out < ang_s_out) ang_e_out += 2 * Math.PI;
-
-                                        let ang_s_in = Math.atan2(p_in_s_y - cy, p_in_s_x - cx);
-                                        let ang_e_in = Math.atan2(p_in_e_y - cy, p_in_e_x - cx);
-                                        if (ang_e_in < ang_s_in) ang_e_in += 2 * Math.PI;
+                                    for (var i = 0; i < 3; i++) {
+                                        var mid = midAngles[i];
+                                        var out_s = (mid - arcSpan / 2) + d_out;
+                                        var out_e = (mid + arcSpan / 2) - d_out;
+                                        var in_s  = (mid - arcSpan / 2) + d_in;
+                                        var in_e  = (mid + arcSpan / 2) - d_in;
 
                                         ctx.beginPath();
-                                        ctx.arc(cx, cy, rOut, ang_s_out, ang_e_out, false);
-                                        ctx.lineTo(p_in_e_x, p_in_e_y);
-                                        ctx.arc(cx, cy, rIn, ang_e_in, ang_s_in, true);
+                                        ctx.arc(cx, cy, R_out, out_s, out_e, false);
+                                        ctx.lineTo(cx + R_in * Math.cos(in_e), cy + R_in * Math.sin(in_e));
+                                        ctx.arc(cx, cy, R_in, in_e, in_s, true);
                                         ctx.closePath();
                                         ctx.fill();
                                     }
@@ -841,10 +390,9 @@ ApplicationWindow {
 
                                 Connections {
                                     target: bigLoqRing
-                                    function onRingColorChanged() {
-                                        loqRingCanvas.requestPaint();
-                                    }
+                                    function onRingColorChanged() { ringCanvas.requestPaint(); }
                                 }
+                                Component.onCompleted: requestPaint()
                             }
 
                             RotationAnimation on rotation {
@@ -870,12 +418,15 @@ ApplicationWindow {
                     }
 
                     // PC Model Name below ring (Centered, No background fill)
-                    M3Text {
+                    StyledText {
                         Layout.alignment: Qt.AlignHCenter
                         text: "LOQ 15IAX9"
-                        font.weight: Font.Bold
-                        font.pixelSize: 13
-                        color: m3theme.textPrimary
+                        font {
+                            family: Appearance.font.family.title
+                            pixelSize: Appearance.font.pixelSize.normal
+                            weight: Font.Bold
+                        }
+                        color: Appearance.colors.colOnSurface
                     }
 
                     // Status Table below model name (Tabular alignment, Monochrome / uncolored, alternating row tints)
@@ -884,8 +435,8 @@ ApplicationWindow {
                         Layout.leftMargin: 2
                         Layout.rightMargin: 2
                         implicitHeight: statusTableCol.implicitHeight
-                        radius: m3theme.roundingSmall
-                        color: m3theme.surfaceContainer
+                        radius: Appearance.rounding.small
+                        color: Appearance.m3colors.m3surfaceContainer
                         clip: true
 
                         ColumnLayout {
@@ -906,7 +457,7 @@ ApplicationWindow {
                                     required property int index
                                     Layout.fillWidth: true
                                     implicitHeight: 26
-                                    color: (index % 2 === 0) ? m3theme.surfaceContainerHigh : "transparent"
+                                    color: (index % 2 === 0) ? Appearance.m3colors.m3surfaceContainerHigh : "transparent"
 
                                     RowLayout {
                                         anchors {
@@ -914,17 +465,17 @@ ApplicationWindow {
                                             leftMargin: 8
                                             rightMargin: 8
                                         }
-                                        M3Text {
+                                        StyledText {
                                             text: modelData.label
-                                            color: m3theme.subtext
-                                            font.pixelSize: 10
+                                            color: Appearance.colors.colSubtext
+                                            font.pixelSize: Appearance.font.pixelSize.smallie
                                             font.weight: Font.DemiBold
                                             Layout.fillWidth: true
                                         }
-                                        M3Text {
+                                        StyledText {
                                             text: modelData.value
-                                            color: m3theme.textPrimary
-                                            font.pixelSize: 10
+                                            color: Appearance.colors.colOnSurface
+                                            font.pixelSize: Appearance.font.pixelSize.smallie
                                             font.weight: Font.Bold
                                         }
                                     }
@@ -934,52 +485,21 @@ ApplicationWindow {
                     }
 
                     // Navigation Destinations
-                    ColumnLayout {
+                    NavigationRailTabArray {
                         Layout.fillWidth: true
-                        spacing: 4
-
+                        currentIndex: root.currentPage
+                        expanded: true
                         Repeater {
                             model: root.pages
-                            delegate: Rectangle {
+                            NavigationRailButton {
+                                required property var index
                                 required property var modelData
-                                required property int index
-                                readonly property bool isCurrent: root.currentPage === index
-
-                                Layout.fillWidth: true
-                                implicitHeight: 40
-                                radius: m3theme.roundingSmall
-                                color: isCurrent ? m3theme.primaryContainer : (navMouse.containsMouse ? m3theme.surfaceContainerHigh : "transparent")
-                                Behavior on color { ColorAnimation { duration: 120 } }
-
-                                RowLayout {
-                                    anchors {
-                                        fill: parent
-                                        leftMargin: 12
-                                        rightMargin: 12
-                                    }
-                                    spacing: 10
-
-                                    M3Icon {
-                                        text: modelData.icon
-                                        iconSize: 20
-                                        color: isCurrent ? m3theme.textOnPrimaryContainer : m3theme.textSecondary
-                                    }
-
-                                    M3Text {
-                                        text: modelData.name
-                                        font.weight: isCurrent ? Font.Bold : Font.Normal
-                                        color: isCurrent ? m3theme.textOnPrimaryContainer : m3theme.textPrimary
-                                        Layout.fillWidth: true
-                                    }
-                                }
-
-                                MouseArea {
-                                    id: navMouse
-                                    anchors.fill: parent
-                                    hoverEnabled: true
-                                    cursorShape: Qt.PointingHandCursor
-                                    onClicked: root.currentPage = index
-                                }
+                                toggled: root.currentPage === index
+                                onPressed: root.currentPage = index;
+                                expanded: true
+                                buttonIcon: modelData.icon
+                                buttonText: modelData.name
+                                showToggledHighlight: false
                             }
                         }
                     }
@@ -992,8 +512,8 @@ ApplicationWindow {
             Rectangle {
                 Layout.fillWidth: true
                 Layout.fillHeight: true
-                color: m3theme.surfaceContainerLow
-                radius: m3theme.windowRounding - root.contentPadding
+                color: Appearance.m3colors.m3surfaceContainerLow
+                radius: Appearance.rounding.windowRounding - root.contentPadding
                 clip: true
 
                 Loader {
@@ -1022,7 +542,8 @@ ApplicationWindow {
                             from: 1
                             to: 0
                             duration: 100
-                            easing.type: Easing.OutQuad
+                            easing.type: Appearance.animation.elementMoveExit.type
+                            easing.bezierCurve: Appearance.animationCurves.emphasizedFirstHalf
                         }
                         ParallelAnimation {
                             PropertyAction {
@@ -1043,14 +564,16 @@ ApplicationWindow {
                                 from: 0
                                 to: 1
                                 duration: 200
-                                easing.type: Easing.OutCubic
+                                easing.type: Appearance.animation.elementMoveEnter.type
+                                easing.bezierCurve: Appearance.animationCurves.emphasizedLastHalf
                             }
                             NumberAnimation {
                                 target: pageLoader
                                 properties: "anchors.topMargin"
                                 to: 0
                                 duration: 200
-                                easing.type: Easing.OutCubic
+                                easing.type: Appearance.animation.elementMoveEnter.type
+                                easing.bezierCurve: Appearance.animationCurves.emphasizedLastHalf
                             }
                         }
                     }
@@ -1060,59 +583,396 @@ ApplicationWindow {
     }
 
     // ══════════════════════════════════════════════════════════════════════
-    // PAGE 0: POWER & GPU
+    // PAGE 0: POWER & GPU (CONTENTPAGE WITH CONTENTSECTION)
     // ══════════════════════════════════════════════════════════════════════
     Component {
         id: powerPage
-        ScrollView {
-            contentWidth: -1
-            clip: true
+        ContentPage {
+            baseWidth: 640
+            forceWidth: true
 
-            ColumnLayout {
-                width: Math.min(parent.width - 32, 640)
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 16
+            // Live Telemetry Table (Material 3 Expressive, Alternating Row Tints, Zero Dots)
+            Rectangle {
+                Layout.fillWidth: true
+                implicitHeight: powerTelemetryCol.implicitHeight
+                radius: Appearance.rounding.normal
+                color: Appearance.m3colors.m3surfaceContainer
+                clip: true
 
-                Item { implicitHeight: 8 }
+                ColumnLayout {
+                    id: powerTelemetryCol
+                    anchors.fill: parent
+                    spacing: 0
 
-                // Live Telemetry Table (Material 3 Expressive, Alternating Row Tints, Zero Dots)
+                    Repeater {
+                        model: [
+                            {
+                                "icon": "speed",
+                                "label": "Active Profile",
+                                "value": `${root.getProfileName(root.statusData.profile)} Profile`
+                            },
+                            {
+                                "icon": "bolt",
+                                "label": "GPU Thermal Envelope",
+                                "value": `${root.statusData.gpu_total_w ?? 130}W Total TGP (${root.statusData.gpu_ctgp_w ?? 105}W cTGP + ${root.statusData.gpu_ppab_w ?? 25}W Boost)`
+                            },
+                            {
+                                "icon": "memory",
+                                "label": "CPU Thermals & Fan",
+                                "value": `${root.statusData.cpu_temp}°C (${root.statusData.fan1_rpm} RPM)`
+                            },
+                            {
+                                "icon": "videogame_asset",
+                                "label": "RTX 4060 Thermals & Fan",
+                                "value": `${root.statusData.gpu_temp}°C (${root.statusData.fan2_rpm} RPM)`
+                            }
+                        ]
+                        delegate: Rectangle {
+                            required property var modelData
+                            required property int index
+                            Layout.fillWidth: true
+                            implicitHeight: 36
+                            color: (index % 2 === 0) ? Appearance.m3colors.m3surfaceContainerHigh : "transparent"
+
+                            RowLayout {
+                                anchors {
+                                    fill: parent
+                                    leftMargin: 12
+                                    rightMargin: 12
+                                }
+                                spacing: 10
+
+                                MaterialSymbol {
+                                    text: modelData.icon
+                                    iconSize: 18
+                                    color: Appearance.colors.colSubtext
+                                }
+
+                                StyledText {
+                                    text: modelData.label
+                                    color: Appearance.colors.colSubtext
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                    Layout.fillWidth: true
+                                }
+
+                                StyledText {
+                                    text: modelData.value
+                                    color: Appearance.colors.colOnSurface
+                                    font.weight: Font.DemiBold
+                                    font.pixelSize: Appearance.font.pixelSize.smaller
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            // 1. Operating Profiles
+            ContentSection {
+                icon: "speed"
+                title: "Power Profiles"
+
+                ContentSubsection {
+                    title: "Operating Power Mode"
+                    tooltip: "Controls CPU/GPU power envelopes and cooling fan curve via Fn+Q"
+
+                    ConfigSelectionArray {
+                        currentValue: root.statusData.profile
+                        onSelected: newValue => {
+                            root.executeCommand("profile", newValue);
+                        }
+                        options: [
+                            { "displayName": "Quiet", "icon": "ac_unit", "value": "quiet" },
+                            { "displayName": "Balanced", "icon": "tune", "value": "balanced" },
+                            { "displayName": "Performance", "icon": "rocket_launch", "value": "performance" },
+                            { "displayName": "Custom", "icon": "local_fire_department", "value": "custom" }
+                        ]
+                    }
+                }
+            }
+
+            // 2. GPU MUX Switch
+            ContentSection {
+                icon: "developer_board"
+                title: "Display & Graphics (MUX)"
+
+                ContentSubsection {
+                    title: "GPU Operating Mode"
+                    tooltip: "Hardware MUX Switch: Dedicated routing directly wires RTX 4060 to laptop display"
+
+                    ConfigSelectionArray {
+                        currentValue: root.statusData.igpu_mode
+                        onSelected: newValue => {
+                            root.executeCommand("mux", String(newValue));
+                        }
+                        options: [
+                            { "displayName": "iGPU Only", "icon": "energy_savings_leaf", "value": 1 },
+                            { "displayName": "Hybrid Dynamic", "icon": "sync_alt", "value": 2 },
+                            { "displayName": "dGPU RTX Only", "icon": "videogame_asset", "value": 0 }
+                        ]
+                    }
+                }
+            }
+
+            // 3. Quick Protection Controls
+            ContentSection {
+                icon: "toggle_on"
+                title: "Quick Controls"
+
+                ConfigSwitch {
+                    buttonIcon: "air"
+                    text: "Emergency Fullspeed (100% Fans for Extreme Thermal Load)"
+                    checked: root.statusData.fan_fullspeed
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.fan_fullspeed) {
+                            root.executeCommand("fan_fullspeed", checked ? "1" : "0");
+                        }
+                    }
+                }
+
+                ConfigSwitch {
+                    buttonIcon: "battery_saver"
+                    text: "Conservation Mode (Limits charge to 80% to protect battery)"
+                    checked: root.statusData.conservation_mode
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.conservation_mode) {
+                            root.executeCommand("conservation", checked ? "1" : "0");
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PAGE 1: FAN CURVES STUDIO (CONTENTPAGE WITH CONTENTSECTION)
+    // ══════════════════════════════════════════════════════════════════════
+    Component {
+        id: curvesPage
+        ContentPage {
+            baseWidth: 640
+            forceWidth: true
+
+            NoticeBox {
+                visible: root.curveAppliedFeedback
+                Layout.fillWidth: true
+                materialIcon: "check_circle"
+                text: "Fan curve successfully written to Lenovo EC hardware!"
+            }
+
+            // 1. Presets
+            ContentSection {
+                icon: "cyclone"
+                title: "Fan Presets"
+
+                ContentSubsection {
+                    title: "Active Preset Profile"
+                    tooltip: "Choose an automated fan acoustic profile or restore factory EC automatic control"
+
+                    ConfigSelectionArray {
+                        currentValue: root.activePresetName
+                        onSelected: newValue => {
+                            root.applyFanPreset(newValue);
+                        }
+                        options: [
+                            { "displayName": "Quiet", "icon": "ac_unit", "value": "quiet" },
+                            { "displayName": "Balanced", "icon": "tune", "value": "balanced" },
+                            { "displayName": "Performance", "icon": "rocket_launch", "value": "performance" },
+                            { "displayName": "100% Max", "icon": "local_fire_department", "value": "max" },
+                            { "displayName": "EC Auto", "icon": "restart_alt", "value": "auto" }
+                        ]
+                    }
+                }
+            }
+
+            // 2. 10-Step Curve Studio
+            ContentSection {
+                icon: "linear_scale"
+                title: "Threshold Tuning (10 Steps)"
+
+                ContentSubsection {
+                    title: "Select Temperature Step"
+                    tooltip: "Each step defines fan RPM response when chip temperature reaches its threshold"
+
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 4
+
+                        Repeater {
+                            model: root.curvePoints
+                            delegate: RippleButton {
+                                required property var modelData
+                                required property int index
+                                Layout.fillWidth: true
+                                implicitHeight: 38
+                                buttonRadius: Appearance.rounding.small
+                                toggled: root.selectedCurveStep === modelData.step
+                                colBackground: toggled ? Appearance.colors.colPrimary : Appearance.colors.colLayer2
+                                onClicked: root.selectedCurveStep = modelData.step
+
+                                contentItem: ColumnLayout {
+                                    anchors.centerIn: parent
+                                    spacing: 1
+                                    StyledText {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: `S${modelData.step}`
+                                        font.weight: Font.Bold
+                                        font.pixelSize: Appearance.font.pixelSize.smaller
+                                        color: parent.parent.toggled ? Appearance.colors.colOnPrimary : Appearance.colors.colOnSecondaryContainer
+                                    }
+                                    StyledText {
+                                        Layout.alignment: Qt.AlignHCenter
+                                        text: `${modelData.temp}°C`
+                                        font.pixelSize: Appearance.font.pixelSize.smallie
+                                        color: parent.parent.toggled ? Appearance.colors.colOnPrimary : Appearance.colors.colSubtext
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Interactive Sliders for Selected Step
+                ContentSubsection {
+                    title: `Step ${root.selectedCurveStep} (${root.curvePoints[root.selectedCurveStep - 1]?.temp ?? 50}°C Threshold)`
+
+                    // CPU Slider
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        OptionalMaterialSymbol {
+                            icon: "memory"
+                            iconSize: Appearance.font.pixelSize.larger
+                        }
+                        StyledText {
+                            text: "CPU Fan Speed"
+                            Layout.preferredWidth: 120
+                            color: Appearance.colors.colOnSecondaryContainer
+                        }
+                        StyledSlider {
+                            Layout.fillWidth: true
+                            configuration: StyledSlider.Configuration.XS
+                            usePercentTooltip: true
+                            from: 0
+                            to: 100
+                            stepSize: 1
+                            value: root.curvePoints[root.selectedCurveStep - 1]?.pwm1 ?? 50
+                            onMoved: {
+                                if (root.curvePoints[root.selectedCurveStep - 1]) {
+                                    root.curvePoints[root.selectedCurveStep - 1].pwm1 = Math.round(value);
+                                    root.curvePointsChanged();
+                                }
+                            }
+                        }
+                        StyledText {
+                            text: `${root.curvePoints[root.selectedCurveStep - 1]?.pwm1 ?? 50}%`
+                            font.weight: Font.Bold
+                            Layout.preferredWidth: 42
+                            horizontalAlignment: Text.AlignRight
+                            color: Appearance.colors.colPrimary
+                        }
+                    }
+
+                    // GPU Slider
+                    RowLayout {
+                        Layout.fillWidth: true
+                        spacing: 10
+
+                        OptionalMaterialSymbol {
+                            icon: "sports_esports"
+                            iconSize: Appearance.font.pixelSize.larger
+                        }
+                        StyledText {
+                            text: "GPU Fan Speed"
+                            Layout.preferredWidth: 120
+                            color: Appearance.colors.colOnSecondaryContainer
+                        }
+                        StyledSlider {
+                            Layout.fillWidth: true
+                            configuration: StyledSlider.Configuration.XS
+                            usePercentTooltip: true
+                            from: 0
+                            to: 100
+                            stepSize: 1
+                            value: root.curvePoints[root.selectedCurveStep - 1]?.pwm2 ?? 50
+                            onMoved: {
+                                if (root.curvePoints[root.selectedCurveStep - 1]) {
+                                    root.curvePoints[root.selectedCurveStep - 1].pwm2 = Math.round(value);
+                                    root.curvePointsChanged();
+                                }
+                            }
+                        }
+                        StyledText {
+                            text: `${root.curvePoints[root.selectedCurveStep - 1]?.pwm2 ?? 50}%`
+                            font.weight: Font.Bold
+                            Layout.preferredWidth: 42
+                            horizontalAlignment: Text.AlignRight
+                            color: "#EF4444"
+                        }
+                    }
+
+                    // Save Button
+                    RippleButtonWithIcon {
+                        Layout.alignment: Qt.AlignRight
+                        Layout.topMargin: 8
+                        materialIcon: "save"
+                        mainText: "Save Step to Hardware"
+                        onClicked: root.applyCurrentStep()
+                    }
+                }
+            }
+        }
+    }
+
+    // ══════════════════════════════════════════════════════════════════════
+    // PAGE 2: HARDWARE & SETTINGS (LENOVO LEGION TOOLKIT SUITE)
+    // ══════════════════════════════════════════════════════════════════════
+    Component {
+        id: hardwarePage
+        ContentPage {
+            baseWidth: 640
+            forceWidth: true
+
+            // 1. Battery Health & Management
+            ContentSection {
+                icon: "battery_charging_full"
+                title: "Battery & Health"
+
+                // Battery Health Table (Material 3 Expressive, Alternating Row Tints, Zero Dots)
                 Rectangle {
                     Layout.fillWidth: true
-                    implicitHeight: powerTelemetryCol.implicitHeight
-                    radius: m3theme.roundingSmall
-                    color: m3theme.surfaceContainer
+                    implicitHeight: batteryTableCol.implicitHeight
+                    radius: Appearance.rounding.normal
+                    color: Appearance.m3colors.m3surfaceContainer
                     clip: true
 
                     ColumnLayout {
-                        id: powerTelemetryCol
+                        id: batteryTableCol
                         anchors.fill: parent
                         spacing: 0
 
                         Repeater {
                             model: [
                                 {
-                                    "icon": "speed",
-                                    "label": "Active Profile",
-                                    "value": `${root.getProfileName(root.statusData.profile)} Profile`,
-                                    "valueColor": root.getProfileColor(root.statusData.profile)
+                                    "icon": "health_and_safety",
+                                    "label": "Battery Health",
+                                    "value": `${root.statusData.battery_health ?? 95.2}%`
+                                },
+                                {
+                                    "icon": "battery_charging_full",
+                                    "label": "Current Charge Status",
+                                    "value": `${root.statusData.battery_capacity ?? 85}% (${root.statusData.battery_status ?? 'Not charging'})`
                                 },
                                 {
                                     "icon": "bolt",
-                                    "label": "GPU Thermal Envelope",
-                                    "value": `${root.statusData.gpu_total_w ?? 130}W Total TGP (${root.statusData.gpu_ctgp_w ?? 105}W cTGP + ${root.statusData.gpu_ppab_w ?? 25}W Boost)`,
-                                    "valueColor": m3theme.textPrimary
+                                    "label": "Full Energy Capacity",
+                                    "value": `${root.statusData.battery_wh_full ?? 57.1} / ${root.statusData.battery_wh_design ?? 60.0} Wh`
                                 },
                                 {
-                                    "icon": "memory",
-                                    "label": "CPU Thermals & Fan",
-                                    "value": `${root.statusData.cpu_temp}°C (${root.statusData.fan1_rpm} RPM)`,
-                                    "valueColor": (root.statusData.cpu_temp > 85 ? "#EF4444" : (root.statusData.cpu_temp > 75 ? "#F59E0B" : m3theme.textPrimary))
-                                },
-                                {
-                                    "icon": "videogame_asset",
-                                    "label": "RTX 4060 Thermals & Fan",
-                                    "value": `${root.statusData.gpu_temp}°C (${root.statusData.fan2_rpm} RPM)`,
-                                    "valueColor": (root.statusData.gpu_temp > 80 ? "#EF4444" : (root.statusData.gpu_temp > 70 ? "#F59E0B" : m3theme.textPrimary))
+                                    "icon": "cycle",
+                                    "label": "Discharge Cycles",
+                                    "value": `${root.statusData.battery_cycles ?? 135} Cycles`
                                 }
                             ]
                             delegate: Rectangle {
@@ -1120,7 +980,7 @@ ApplicationWindow {
                                 required property int index
                                 Layout.fillWidth: true
                                 implicitHeight: 36
-                                color: (index % 2 === 0) ? m3theme.surfaceContainerHigh : "transparent"
+                                color: (index % 2 === 0) ? Appearance.m3colors.m3surfaceContainerHigh : "transparent"
 
                                 RowLayout {
                                     anchors {
@@ -1130,24 +990,24 @@ ApplicationWindow {
                                     }
                                     spacing: 10
 
-                                    M3Icon {
+                                    MaterialSymbol {
                                         text: modelData.icon
                                         iconSize: 18
-                                        color: m3theme.subtext
+                                        color: Appearance.colors.colSubtext
                                     }
 
-                                    M3Text {
+                                    StyledText {
                                         text: modelData.label
-                                        color: m3theme.subtext
-                                        font.pixelSize: 12
+                                        color: Appearance.colors.colSubtext
+                                        font.pixelSize: Appearance.font.pixelSize.smaller
                                         Layout.fillWidth: true
                                     }
 
-                                    M3Text {
+                                    StyledText {
                                         text: modelData.value
-                                        color: modelData.valueColor || m3theme.textPrimary
+                                        color: Appearance.colors.colOnSurface
                                         font.weight: Font.DemiBold
-                                        font.pixelSize: 12
+                                        font.pixelSize: Appearance.font.pixelSize.smaller
                                     }
                                 }
                             }
@@ -1155,648 +1015,284 @@ ApplicationWindow {
                     }
                 }
 
-                // 1. Operating Profiles
-                M3Section {
-                    icon: "speed"
-                    title: "Power Profiles"
-
-                    M3Subsection {
-                        title: "Operating Power Mode"
-                        tooltip: "Controls CPU/GPU power envelopes and cooling fan curve via Fn+Q"
-
-                        M3SegmentedControl {
-                            currentValue: root.statusData.profile
-                            onSelected: newValue => {
-                                root.executeCommand("profile", newValue);
-                            }
-                            options: [
-                                { "displayName": "Quiet", "icon": "ac_unit", "value": "quiet", "activeBg": "#082F49", "activeFg": "#7DD3FC" },
-                                { "displayName": "Balanced", "icon": "tune", "value": "balanced", "activeBg": "#334155", "activeFg": "#F8FAFC" },
-                                { "displayName": "Performance", "icon": "rocket_launch", "value": "performance", "activeBg": "#7F1D1D", "activeFg": "#FECACA" },
-                                { "displayName": "Custom", "icon": "local_fire_department", "value": "custom", "activeBg": "#831843", "activeFg": "#FBCFE8" }
-                            ]
+                ConfigSwitch {
+                    buttonIcon: "battery_saver"
+                    text: "Conservation Mode (Limits charging to 80% to maximize battery longevity)"
+                    checked: root.statusData.conservation_mode
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.conservation_mode) {
+                            root.executeCommand("conservation", checked ? "1" : "0");
                         }
                     }
                 }
-
-                // 2. GPU MUX Switch
-                M3Section {
-                    icon: "developer_board"
-                    title: "Display & Graphics (MUX)"
-
-                    M3Subsection {
-                        title: "GPU Operating Mode"
-                        tooltip: "Hardware MUX Switch: Dedicated routing directly wires RTX 4060 to laptop display"
-
-                        M3SegmentedControl {
-                            currentValue: root.statusData.igpu_mode
-                            onSelected: newValue => {
-                                root.executeCommand("mux", String(newValue));
-                            }
-                            options: [
-                                { "displayName": "iGPU Only", "icon": "energy_savings_leaf", "value": 1 },
-                                { "displayName": "Hybrid Dynamic", "icon": "sync_alt", "value": 2 },
-                                { "displayName": "dGPU RTX Only", "icon": "videogame_asset", "value": 0 }
-                            ]
-                        }
-                    }
-                }
-
-                // 3. Quick Protection Controls
-                M3Section {
-                    icon: "toggle_on"
-                    title: "Quick Controls"
-
-                    M3Switch {
-                        icon: "air"
-                        title: "Emergency Fullspeed"
-                        subtitle: "100% Fans for Extreme Thermal Load"
-                        checked: root.statusData.fan_fullspeed
-                        onToggled: state => {
-                            root.executeCommand("fan_fullspeed", state ? "1" : "0");
-                        }
-                    }
-
-                    M3Switch {
-                        icon: "battery_saver"
-                        title: "Conservation Mode"
-                        subtitle: "Limits charging to 80% to protect battery longevity"
-                        checked: root.statusData.conservation_mode
-                        onToggled: state => {
-                            root.executeCommand("conservation", state ? "1" : "0");
-                        }
-                    }
-                }
-
-                Item { implicitHeight: 16 }
             }
-        }
-    }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // PAGE 1: FAN CURVES STUDIO
-    // ══════════════════════════════════════════════════════════════════════
-    Component {
-        id: curvesPage
-        ScrollView {
-            contentWidth: -1
-            clip: true
+            // 2. Lighting & Backlight Controls
+            ContentSection {
+                icon: "light_mode"
+                title: "Lighting & Backlight"
 
-            ColumnLayout {
-                width: Math.min(parent.width - 32, 640)
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 16
+                ContentSubsection {
+                    title: "Keyboard Backlight Level"
+                    tooltip: "Integrated white keyboard backlight level"
 
-                Item { implicitHeight: 8 }
-
-                M3Notice {
-                    visible: root.curveAppliedFeedback
-                    icon: "check_circle"
-                    text: "Fan curve successfully written to Lenovo EC hardware!"
-                }
-
-                // 1. Presets
-                M3Section {
-                    icon: "cyclone"
-                    title: "Fan Presets"
-
-                    M3Subsection {
-                        title: "Active Preset Profile"
-                        tooltip: "Choose an automated fan acoustic profile or restore factory EC automatic control"
-
-                        M3SegmentedControl {
-                            currentValue: root.activePresetName
-                            onSelected: newValue => {
-                                root.applyFanPreset(newValue);
-                            }
-                            options: [
-                                { "displayName": "Quiet", "icon": "ac_unit", "value": "quiet", "activeBg": "#082F49", "activeFg": "#7DD3FC" },
-                                { "displayName": "Balanced", "icon": "tune", "value": "balanced", "activeBg": "#334155", "activeFg": "#F8FAFC" },
-                                { "displayName": "Performance", "icon": "rocket_launch", "value": "performance", "activeBg": "#7F1D1D", "activeFg": "#FECACA" },
-                                { "displayName": "100% Max", "icon": "local_fire_department", "value": "max", "activeBg": "#991B1B", "activeFg": "#FEE2E2" },
-                                { "displayName": "EC Auto", "icon": "restart_alt", "value": "auto", "activeBg": m3theme.primaryContainer, "activeFg": m3theme.textOnPrimaryContainer }
-                            ]
+                    ConfigSelectionArray {
+                        currentValue: root.statusData.kbd_backlight
+                        onSelected: newValue => {
+                            root.executeCommand("kbd", String(newValue));
                         }
+                        options: [
+                            { "displayName": "Off", "icon": "flash_off", "value": 0 },
+                            { "displayName": "Low", "icon": "brightness_low", "value": 1 },
+                            { "displayName": "High", "icon": "brightness_high", "value": 2 }
+                        ]
                     }
                 }
 
-                // 2. 10-Step Curve Studio
-                M3Section {
-                    icon: "linear_scale"
-                    title: "Threshold Tuning (10 Steps)"
-
-                    M3Subsection {
-                        title: "Select Temperature Step"
-                        tooltip: "Each step defines fan RPM response when chip temperature reaches its threshold"
-
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 4
-
-                            Repeater {
-                                model: root.curvePoints
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    readonly property bool isSelected: root.selectedCurveStep === modelData.step
-
-                                    Layout.fillWidth: true
-                                    implicitHeight: 38
-                                    radius: m3theme.roundingSmall
-                                    color: isSelected ? m3theme.primaryContainer : (stepMouse.containsMouse ? m3theme.surfaceContainerHigh : m3theme.surfaceContainer)
-                                    Behavior on color { ColorAnimation { duration: 120 } }
-
-                                    ColumnLayout {
-                                        anchors.centerIn: parent
-                                        spacing: 1
-                                        M3Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: `S${modelData.step}`
-                                            font.weight: Font.Bold
-                                            font.pixelSize: 11
-                                            color: isSelected ? m3theme.textOnPrimaryContainer : m3theme.textPrimary
-                                        }
-                                        M3Text {
-                                            Layout.alignment: Qt.AlignHCenter
-                                            text: `${modelData.temp}°C`
-                                            font.pixelSize: 9
-                                            color: isSelected ? m3theme.textOnPrimaryContainer : m3theme.subtext
-                                        }
-                                    }
-
-                                    MouseArea {
-                                        id: stepMouse
-                                        anchors.fill: parent
-                                        hoverEnabled: true
-                                        cursorShape: Qt.PointingHandCursor
-                                        onClicked: root.selectedCurveStep = modelData.step
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    // Interactive Sliders for Selected Step
-                    M3Subsection {
-                        title: `Step ${root.selectedCurveStep} (${root.curvePoints[root.selectedCurveStep - 1]?.temp ?? 50}°C Threshold)`
-
-                        // CPU Slider
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            M3Icon {
-                                text: "memory"
-                                iconSize: 20
-                                color: m3theme.subtext
-                            }
-                            M3Text {
-                                text: "CPU Fan Speed"
-                                Layout.preferredWidth: 120
-                                color: m3theme.textPrimary
-                            }
-                            M3Slider {
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                stepSize: 1
-                                value: root.curvePoints[root.selectedCurveStep - 1]?.pwm1 ?? 50
-                                onMoved: val => {
-                                    if (root.curvePoints[root.selectedCurveStep - 1]) {
-                                        root.curvePoints[root.selectedCurveStep - 1].pwm1 = Math.round(val);
-                                        root.curvePointsChanged();
-                                    }
-                                }
-                            }
-                            M3Text {
-                                text: `${root.curvePoints[root.selectedCurveStep - 1]?.pwm1 ?? 50}%`
-                                font.weight: Font.Bold
-                                Layout.preferredWidth: 42
-                                horizontalAlignment: Text.AlignRight
-                                color: m3theme.primary
-                            }
-                        }
-
-                        // GPU Slider
-                        RowLayout {
-                            Layout.fillWidth: true
-                            spacing: 10
-
-                            M3Icon {
-                                text: "sports_esports"
-                                iconSize: 20
-                                color: m3theme.subtext
-                            }
-                            M3Text {
-                                text: "GPU Fan Speed"
-                                Layout.preferredWidth: 120
-                                color: m3theme.textPrimary
-                            }
-                            M3Slider {
-                                Layout.fillWidth: true
-                                from: 0
-                                to: 100
-                                stepSize: 1
-                                value: root.curvePoints[root.selectedCurveStep - 1]?.pwm2 ?? 50
-                                onMoved: val => {
-                                    if (root.curvePoints[root.selectedCurveStep - 1]) {
-                                        root.curvePoints[root.selectedCurveStep - 1].pwm2 = Math.round(val);
-                                        root.curvePointsChanged();
-                                    }
-                                }
-                            }
-                            M3Text {
-                                text: `${root.curvePoints[root.selectedCurveStep - 1]?.pwm2 ?? 50}%`
-                                font.weight: Font.Bold
-                                Layout.preferredWidth: 42
-                                horizontalAlignment: Text.AlignRight
-                                color: "#EF4444"
-                            }
-                        }
-
-                        // Save Button
-                        M3Button {
-                            Layout.alignment: Qt.AlignRight
-                            Layout.topMargin: 8
-                            icon: "save"
-                            text: "Save Step to Hardware"
-                            onClicked: root.applyCurrentStep()
+                ConfigSwitch {
+                    buttonIcon: "highlight"
+                    text: "Rear I/O Ports Light (Illuminates back connector labels)"
+                    checked: root.statusData.ioport_light
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.ioport_light) {
+                            root.executeCommand("ioport", checked ? "1" : "0");
                         }
                     }
                 }
-
-                Item { implicitHeight: 16 }
             }
-        }
-    }
 
-    // ══════════════════════════════════════════════════════════════════════
-    // PAGE 2: HARDWARE & SETTINGS
-    // ══════════════════════════════════════════════════════════════════════
-    Component {
-        id: hardwarePage
-        ScrollView {
-            contentWidth: -1
-            clip: true
+            // 3. Display & Refresh Rate
+            ContentSection {
+                icon: "display_settings"
+                title: "Display & Refresh Rate"
 
-            ColumnLayout {
-                width: Math.min(parent.width - 32, 640)
-                anchors.horizontalCenter: parent.horizontalCenter
-                spacing: 16
+                ContentSubsection {
+                    title: "Panel Refresh Rate"
+                    tooltip: "Switch internal laptop eDP-1 refresh rate via Hyprland"
 
-                Item { implicitHeight: 8 }
+                    ConfigSelectionArray {
+                        currentValue: root.statusData.display_hz
+                        onSelected: newValue => {
+                            root.executeCommand("refresh", String(newValue));
+                        }
+                        options: [
+                            { "displayName": "60Hz (Power Saver)", "icon": "speed", "value": 60 },
+                            { "displayName": "144Hz (Smooth Gaming)", "icon": "bolt", "value": 144 }
+                        ]
+                    }
+                }
 
-                // 1. Battery Health & Management
-                M3Section {
-                    icon: "battery_charging_full"
-                    title: "Battery & Health"
-
-                    // Battery Health Table (Material 3 Expressive, Alternating Row Tints, Zero Dots)
-                    Rectangle {
-                        Layout.fillWidth: true
-                        implicitHeight: batteryTableCol.implicitHeight
-                        radius: m3theme.roundingSmall
-                        color: m3theme.surfaceContainer
-                        clip: true
-
-                        ColumnLayout {
-                            id: batteryTableCol
-                            anchors.fill: parent
-                            spacing: 0
-
-                            Repeater {
-                                model: [
-                                    {
-                                        "icon": "health_and_safety",
-                                        "label": "Battery Health",
-                                        "value": `${root.statusData.battery_health ?? 95.2}%`
-                                    },
-                                    {
-                                        "icon": "battery_charging_full",
-                                        "label": "Current Charge Status",
-                                        "value": `${root.statusData.battery_capacity ?? 85}% (${root.statusData.battery_status ?? 'Not charging'})`
-                                    },
-                                    {
-                                        "icon": "bolt",
-                                        "label": "Full Energy Capacity",
-                                        "value": `${root.statusData.battery_wh_full ?? 57.1} / ${root.statusData.battery_wh_design ?? 60.0} Wh`
-                                    },
-                                    {
-                                        "icon": "cycle",
-                                        "label": "Discharge Cycles",
-                                        "value": `${root.statusData.battery_cycles ?? 135} Cycles`
-                                    }
-                                ]
-                                delegate: Rectangle {
-                                    required property var modelData
-                                    required property int index
-                                    Layout.fillWidth: true
-                                    implicitHeight: 36
-                                    color: (index % 2 === 0) ? m3theme.surfaceContainerHigh : "transparent"
-
-                                    RowLayout {
-                                        anchors {
-                                            fill: parent
-                                            leftMargin: 12
-                                            rightMargin: 12
-                                        }
-                                        spacing: 10
-
-                                        M3Icon {
-                                            text: modelData.icon
-                                            iconSize: 18
-                                            color: m3theme.subtext
-                                        }
-
-                                        M3Text {
-                                            text: modelData.label
-                                            color: m3theme.subtext
-                                            font.pixelSize: 12
-                                            Layout.fillWidth: true
-                                        }
-
-                                        M3Text {
-                                            text: modelData.value
-                                            color: m3theme.textPrimary
-                                            font.weight: Font.DemiBold
-                                            font.pixelSize: 12
-                                        }
-                                    }
-                                }
-                            }
+                ConfigSwitch {
+                    buttonIcon: "speed"
+                    text: "Display LCD Overdrive (Lowers pixel response time for competitive gaming)"
+                    checked: root.statusData.overdrive
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.overdrive) {
+                            root.executeCommand("overdrive", checked ? "1" : "0");
                         }
                     }
+                }
+            }
 
-                    M3Switch {
-                        icon: "battery_saver"
-                        title: "Conservation Mode"
-                        subtitle: "Limits charging to 80% to maximize battery longevity"
-                        checked: root.statusData.conservation_mode
-                        onToggled: state => {
-                            root.executeCommand("conservation", state ? "1" : "0");
+            // 4. Hardware Input Locks
+            ContentSection {
+                icon: "lock"
+                title: "Hardware Input Locks"
+
+                ConfigSwitch {
+                    buttonIcon: "touchpad_mouse"
+                    text: "Touchpad Enabled"
+                    checked: root.statusData.touchpad
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.touchpad) {
+                            root.executeCommand("touchpad", checked ? "1" : "0");
                         }
                     }
                 }
 
-                // 2. Lighting & Backlight Controls
-                M3Section {
-                    icon: "light_mode"
-                    title: "Lighting & Backlight"
-
-                    M3Subsection {
-                        title: "Keyboard Backlight Level"
-                        tooltip: "Integrated white keyboard backlight level"
-
-                        M3SegmentedControl {
-                            currentValue: root.statusData.kbd_backlight
-                            onSelected: newValue => {
-                                root.executeCommand("kbd", String(newValue));
-                            }
-                            options: [
-                                { "displayName": "Off", "icon": "flash_off", "value": 0 },
-                                { "displayName": "Low", "icon": "brightness_low", "value": 1 },
-                                { "displayName": "High", "icon": "brightness_high", "value": 2 }
-                            ]
-                        }
-                    }
-
-                    M3Switch {
-                        icon: "highlight"
-                        title: "Rear I/O Ports Light"
-                        subtitle: "Illuminates back connector labels"
-                        checked: root.statusData.ioport_light
-                        onToggled: state => {
-                            root.executeCommand("ioport", state ? "1" : "0");
+                ConfigSwitch {
+                    buttonIcon: "keyboard"
+                    text: "Windows / Meta Key Enabled (Disable to prevent accidental minimization)"
+                    checked: root.statusData.winkey
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.winkey) {
+                            root.executeCommand("winkey", checked ? "1" : "0");
                         }
                     }
                 }
 
-                // 3. Display & Refresh Rate
-                M3Section {
-                    icon: "display_settings"
-                    title: "Display & Refresh Rate"
-
-                    M3Subsection {
-                        title: "Panel Refresh Rate"
-                        tooltip: "Switch internal laptop eDP-1 refresh rate"
-
-                        M3SegmentedControl {
-                            currentValue: root.statusData.display_hz
-                            onSelected: newValue => {
-                                root.executeCommand("refresh", String(newValue));
-                            }
-                            options: [
-                                { "displayName": "60Hz (Power Saver)", "icon": "speed", "value": 60 },
-                                { "displayName": "144Hz (Smooth Gaming)", "icon": "bolt", "value": 144 }
-                            ]
-                        }
-                    }
-
-                    M3Switch {
-                        icon: "speed"
-                        title: "Display LCD Overdrive"
-                        subtitle: "Lowers pixel response time for competitive gaming"
-                        checked: root.statusData.overdrive
-                        onToggled: state => {
-                            root.executeCommand("overdrive", state ? "1" : "0");
+                ConfigSwitch {
+                    buttonIcon: "lock"
+                    text: "Fn Lock (F1-F12 act as primary function keys rather than hotkeys)"
+                    checked: root.statusData.fn_lock
+                    onCheckedChanged: {
+                        if (checked !== root.statusData.fn_lock) {
+                            root.executeCommand("fn_lock", checked ? "1" : "0");
                         }
                     }
                 }
+            }
 
-                // 4. Hardware Input Locks
-                M3Section {
-                    icon: "lock"
-                    title: "Hardware Input Locks"
+            // 5. GodMode Power Limits
+            ContentSection {
+                icon: "bolt"
+                title: "GodMode Power Limits"
 
-                    M3Switch {
-                        icon: "touchpad_mouse"
-                        title: "Touchpad Enabled"
-                        subtitle: "Hardware toggle for built-in trackpad"
-                        checked: root.statusData.touchpad
-                        onToggled: state => {
-                            root.executeCommand("touchpad", state ? "1" : "0");
-                        }
+                NoticeBox {
+                    visible: root.powerLimitsFeedback
+                    Layout.fillWidth: true
+                    materialIcon: "check_circle"
+                    text: "Custom CPU & GPU power limits applied to hardware!"
+                }
+
+                // CPU PL1
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    OptionalMaterialSymbol {
+                        icon: "memory"
+                        iconSize: Appearance.font.pixelSize.larger
                     }
-
-                    M3Switch {
-                        icon: "keyboard"
-                        title: "Windows / Meta Key"
-                        subtitle: "Disable during gaming to prevent accidental window minimization"
-                        checked: root.statusData.winkey
-                        onToggled: state => {
-                            root.executeCommand("winkey", state ? "1" : "0");
-                        }
+                    StyledText {
+                        text: "CPU Long-Term (PL1)"
+                        Layout.preferredWidth: 150
+                        color: Appearance.colors.colOnSecondaryContainer
                     }
-
-                    M3Switch {
-                        icon: "lock"
-                        title: "Fn Lock"
-                        subtitle: "F1-F12 act as primary function keys rather than hotkeys"
-                        checked: root.statusData.fn_lock
-                        onToggled: state => {
-                            root.executeCommand("fn_lock", state ? "1" : "0");
-                        }
+                    StyledSlider {
+                        Layout.fillWidth: true
+                        configuration: StyledSlider.Configuration.XS
+                        usePercentTooltip: false
+                        from: 15
+                        to: 115
+                        stepSize: 5
+                        value: root.sliderPl1
+                        onMoved: root.sliderPl1 = Math.round(value)
+                    }
+                    StyledText {
+                        text: `${root.sliderPl1}W`
+                        font.weight: Font.Bold
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                        color: Appearance.colors.colPrimary
                     }
                 }
 
-                // 5. GodMode Power Limits
-                M3Section {
-                    icon: "bolt"
-                    title: "GodMode Power Limits"
+                // CPU PL2
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
 
-                    M3Notice {
-                        visible: root.powerLimitsFeedback
-                        icon: "check_circle"
-                        text: "Custom CPU & GPU power limits applied to hardware!"
+                    OptionalMaterialSymbol {
+                        icon: "memory"
+                        iconSize: Appearance.font.pixelSize.larger
                     }
-
-                    // CPU PL1
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        M3Icon {
-                            text: "memory"
-                            iconSize: 20
-                            color: m3theme.subtext
-                        }
-                        M3Text {
-                            text: "CPU Long-Term (PL1)"
-                            Layout.preferredWidth: 150
-                            color: m3theme.textPrimary
-                        }
-                        M3Slider {
-                            Layout.fillWidth: true
-                            from: 15
-                            to: 115
-                            stepSize: 5
-                            value: root.sliderPl1
-                            onMoved: val => root.sliderPl1 = Math.round(val)
-                        }
-                        M3Text {
-                            text: `${root.sliderPl1}W`
-                            font.weight: Font.Bold
-                            Layout.preferredWidth: 42
-                            horizontalAlignment: Text.AlignRight
-                            color: m3theme.primary
-                        }
+                    StyledText {
+                        text: "CPU Short-Term (PL2)"
+                        Layout.preferredWidth: 150
+                        color: Appearance.colors.colOnSecondaryContainer
                     }
-
-                    // CPU PL2
-                    RowLayout {
+                    StyledSlider {
                         Layout.fillWidth: true
-                        spacing: 10
-
-                        M3Icon {
-                            text: "memory"
-                            iconSize: 20
-                            color: m3theme.subtext
-                        }
-                        M3Text {
-                            text: "CPU Short-Term (PL2)"
-                            Layout.preferredWidth: 150
-                            color: m3theme.textPrimary
-                        }
-                        M3Slider {
-                            Layout.fillWidth: true
-                            from: 25
-                            to: 135
-                            stepSize: 5
-                            value: root.sliderPl2
-                            onMoved: val => root.sliderPl2 = Math.round(val)
-                        }
-                        M3Text {
-                            text: `${root.sliderPl2}W`
-                            font.weight: Font.Bold
-                            Layout.preferredWidth: 42
-                            horizontalAlignment: Text.AlignRight
-                            color: m3theme.primary
-                        }
+                        configuration: StyledSlider.Configuration.XS
+                        usePercentTooltip: false
+                        from: 25
+                        to: 135
+                        stepSize: 5
+                        value: root.sliderPl2
+                        onMoved: root.sliderPl2 = Math.round(value)
                     }
-
-                    // GPU cTGP
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        M3Icon {
-                            text: "sports_esports"
-                            iconSize: 20
-                            color: m3theme.subtext
-                        }
-                        M3Text {
-                            text: "GPU Base cTGP"
-                            Layout.preferredWidth: 150
-                            color: m3theme.textPrimary
-                        }
-                        M3Slider {
-                            Layout.fillWidth: true
-                            from: 45
-                            to: 105
-                            stepSize: 5
-                            value: root.sliderCtgp
-                            onMoved: val => root.sliderCtgp = Math.round(val)
-                        }
-                        M3Text {
-                            text: `${root.sliderCtgp}W`
-                            font.weight: Font.Bold
-                            Layout.preferredWidth: 42
-                            horizontalAlignment: Text.AlignRight
-                            color: "#EF4444"
-                        }
-                    }
-
-                    // GPU PPAB
-                    RowLayout {
-                        Layout.fillWidth: true
-                        spacing: 10
-
-                        M3Icon {
-                            text: "sports_esports"
-                            iconSize: 20
-                            color: m3theme.subtext
-                        }
-                        M3Text {
-                            text: "GPU Dynamic Boost (PPAB)"
-                            Layout.preferredWidth: 150
-                            color: m3theme.textPrimary
-                        }
-                        M3Slider {
-                            Layout.fillWidth: true
-                            from: 5
-                            to: 25
-                            stepSize: 5
-                            value: root.sliderPpab
-                            onMoved: val => root.sliderPpab = Math.round(val)
-                        }
-                        M3Text {
-                            text: `${root.sliderPpab}W`
-                            font.weight: Font.Bold
-                            Layout.preferredWidth: 42
-                            horizontalAlignment: Text.AlignRight
-                            color: "#EF4444"
-                        }
-                    }
-
-                    RowLayout {
-                        Layout.fillWidth: true
-                        Layout.topMargin: 6
-
-                        M3Notice {
-                            Layout.fillWidth: true
-                            icon: "bolt"
-                            text: `Combined Total GPU TGP: ${root.sliderCtgp + root.sliderPpab}W`
-                        }
-
-                        M3Button {
-                            icon: "check"
-                            text: "Apply Limits"
-                            onClicked: root.applyPowerLimits(root.sliderPl1, root.sliderPl2, root.sliderCtgp, root.sliderPpab)
-                        }
+                    StyledText {
+                        text: `${root.sliderPl2}W`
+                        font.weight: Font.Bold
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                        color: Appearance.colors.colPrimary
                     }
                 }
 
-                Item { implicitHeight: 16 }
+                // GPU cTGP
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    OptionalMaterialSymbol {
+                        icon: "sports_esports"
+                        iconSize: Appearance.font.pixelSize.larger
+                    }
+                    StyledText {
+                        text: "GPU Base cTGP"
+                        Layout.preferredWidth: 150
+                        color: Appearance.colors.colOnSecondaryContainer
+                    }
+                    StyledSlider {
+                        Layout.fillWidth: true
+                        configuration: StyledSlider.Configuration.XS
+                        usePercentTooltip: false
+                        from: 45
+                        to: 105
+                        stepSize: 5
+                        value: root.sliderCtgp
+                        onMoved: root.sliderCtgp = Math.round(value)
+                    }
+                    StyledText {
+                        text: `${root.sliderCtgp}W`
+                        font.weight: Font.Bold
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                        color: "#EF4444"
+                    }
+                }
+
+                // GPU PPAB
+                RowLayout {
+                    Layout.fillWidth: true
+                    spacing: 10
+
+                    OptionalMaterialSymbol {
+                        icon: "sports_esports"
+                        iconSize: Appearance.font.pixelSize.larger
+                    }
+                    StyledText {
+                        text: "GPU Dynamic Boost (PPAB)"
+                        Layout.preferredWidth: 150
+                        color: Appearance.colors.colOnSecondaryContainer
+                    }
+                    StyledSlider {
+                        Layout.fillWidth: true
+                        configuration: StyledSlider.Configuration.XS
+                        usePercentTooltip: false
+                        from: 5
+                        to: 25
+                        stepSize: 5
+                        value: root.sliderPpab
+                        onMoved: root.sliderPpab = Math.round(value)
+                    }
+                    StyledText {
+                        text: `${root.sliderPpab}W`
+                        font.weight: Font.Bold
+                        Layout.preferredWidth: 42
+                        horizontalAlignment: Text.AlignRight
+                        color: "#EF4444"
+                    }
+                }
+
+                RowLayout {
+                    Layout.fillWidth: true
+                    Layout.topMargin: 6
+
+                    NoticeBox {
+                        Layout.fillWidth: true
+                        materialIcon: "bolt"
+                        text: `Combined Total GPU TGP: ${root.sliderCtgp + root.sliderPpab}W`
+                    }
+
+                    RippleButtonWithIcon {
+                        materialIcon: "check"
+                        mainText: "Apply Limits"
+                        onClicked: root.applyPowerLimits(root.sliderPl1, root.sliderPl2, root.sliderCtgp, root.sliderPpab)
+                    }
+                }
             }
         }
     }
