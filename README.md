@@ -4,13 +4,14 @@
 
 # Loqer
 
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Any%20Distro-blue.svg)](https://kernel.org)
-[![UI](https://img.shields.io/badge/ui-Quickshell%20Material%203-6750A4.svg)](https://quickshell.outfoxxed.me)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Windows%20x64-blue.svg)](https://github.com/lavan8t/loqer)
+[![UI](https://img.shields.io/badge/ui-Material%203%20QML-6750A4.svg)](https://github.com/lavan8t/loqer)
+[![CI/CD](https://github.com/lavan8t/loqer/actions/workflows/ci.yml/badge.svg)](https://github.com/lavan8t/loqer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Loqer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux.
+Loqer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux and Windows.
 
-The project pairs a background daemon with a standalone Quickshell desktop window and a command-line tool named `loq-ctl`. It functions independently of any specific window manager or dotfile setup.
+On Linux, the project pairs a background daemon with a standalone Quickshell desktop window and a command-line tool named `loq-ctl`. On Windows, a minified native C++ Qt host embeds the exact 1:1 Material 3 frontend and Google Sans Flex variable font with zero rewrite, interfacing directly with Lenovo ACPI WMI and Win32 firmware APIs under the hood.
 
 ## Features
 
@@ -154,6 +155,41 @@ loq-ctl bootlogo reset
 # Read telemetry JSON
 loq-ctl status
 ```
+
+## Windows Native Host & Cross-Compilation
+
+Loqer provides a native C++ Windows host (`windows/`) that embeds the exact 1:1 Material 3 QML frontend and variable font into a minified, standalone Windows executable (`loqer.exe`).
+
+### Building on Fedora (MinGW Cross-Compilation)
+
+You can compile the Windows binary and package a portable release zip directly on Fedora:
+
+```bash
+# 1. Install toolchain dependencies
+sudo dnf install -y mingw64-gcc-c++ mingw64-filesystem mingw64-qt6-qtbase \
+                    mingw64-qt6-qtdeclarative mingw64-qt6-qt5compat \
+                    mingw64-qt6-qtshadertools mingw64-qt6-qtsvg upx cmake make
+
+# 2. Build and package
+./build-windows.sh
+```
+
+The script compiles the native binary with aggressive dead-code elimination, strips symbols, and packages all runtime DLLs and platform plugins into:
+- `dist/loqer-windows-x64.zip` (standalone portable distribution)
+- `loqer.exe` (~2.5 MB compressed native executable)
+
+### Under the Hood on Windows
+
+- **Power Modes & Conservation**: Dispatched natively to Lenovo ACPI WMI classes (`root\wmi` -> `Lenovo_BiosSetting`, `Lenovo_GameZone`).
+- **Telemetry**: Live AC power and battery telemetry queried via Win32 `GetSystemPowerStatus`.
+- **UEFI Boot Logo**: Uses Win32 `GetFirmwareEnvironmentVariableExW` and `SetFirmwareEnvironmentVariableExW` with Lenovo GUID `{782163fe-78e8-466d-978a-0a7b427b03b3}` and automatically mounts the ESP to stage the splash image.
+
+## CI/CD Automation
+
+The repository includes a GitHub Actions workflow (`.github/workflows/ci.yml`) that runs on every push and pull request:
+- **Linux Distribution**: Packages `loqer-linux-x64.tar.gz` with complete daemon, CLI, and systemd units.
+- **Windows Distribution**: Cross-compiles `loqer.exe` inside a Fedora container and produces `loqer-windows-x64.zip`.
+- **Automated Releases**: On tagged commits (`v*`), both Linux and Windows release archives are automatically attached to the GitHub release.
 
 ## License
 
