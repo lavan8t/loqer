@@ -1,10 +1,11 @@
-#!/bin/bash
-# Switch internal laptop panel refresh rate in Hyprland
+#!/usr/bin/env bash
+# Switch internal laptop panel refresh rate across desktop environments
+# Supports: Hyprland, KDE Plasma (kscreen-doctor), Sway/wlroots (wlr-randr), and X11 (xrandr)
 set -euo pipefail
 
-TARGET_RATE="${1:-native}" # 60 or native/144
+TARGET_RATE="${1:-native}" # 60 or native/144/max
 
-USER_NAME="${SUDO_USER:-lavan}"
+USER_NAME="${SUDO_USER:-$USER}"
 USER_ID="$(id -u "$USER_NAME" 2>/dev/null || echo 1000)"
 USER_RUNTIME="/run/user/$USER_ID"
 
@@ -20,7 +21,15 @@ if [ -z "${WAYLAND_DISPLAY:-}" ]; then
     export WAYLAND_DISPLAY
 fi
 
+# Detect internal panel connector dynamically from sysfs
 MONITOR_NAME="eDP-1"
+for conn in /sys/class/drm/card*-eDP-*/status; do
+    if [ -f "$conn" ] && [ "$(cat "$conn" 2>/dev/null)" = "connected" ]; then
+        MONITOR_NAME="$(basename "$(dirname "$conn")" | sed -E 's/card[0-9]+-//')"
+        break
+    fi
+done
+
 RES="1920x1080"
 POS="0x0"
 SCALE="1"
@@ -29,10 +38,12 @@ case "$TARGET_RATE" in
     60)
         MODE_STR="${RES}@60"
         EVAL_MODE="1920x1080@60.00"
+        NUM_RATE="60"
         ;;
     native|144|max)
         MODE_STR="${RES}@144"
         EVAL_MODE="1920x1080@144.00"
+        NUM_RATE="144"
         ;;
     *)
         echo "Usage: $0 [60|native]" >&2
@@ -40,17 +51,40 @@ case "$TARGET_RATE" in
         ;;
 esac
 
-run_hyprctl() {
+run_as_user() {
     if [ "$(id -u)" -eq 0 ]; then
         runuser -u "$USER_NAME" -- env \
             XDG_RUNTIME_DIR="$XDG_RUNTIME_DIR" \
-            WAYLAND_DISPLAY="$WAYLAND_DISPLAY" \
-            HYPRLAND_INSTANCE_SIGNATURE="$HYPRLAND_INSTANCE_SIGNATURE" \
-            hyprctl "$@"
+            WAYLAND_DISPLAY="${WAYLAND_DISPLAY:-}" \
+            DISPLAY="${DISPLAY:-:0}" \
+            HYPRLAND_INSTANCE_SIGNATURE="${HYPRLAND_INSTANCE_SIGNATURE:-}" \
+            "$@"
     else
-        hyprctl "$@"
+        "$@"
     fi
 }
 
-run_hyprctl eval "hl.monitor({ output = \"$MONITOR_NAME\", mode = \"$EVAL_MODE\", position = \"$POS\", scale = $SCALE })" >/dev/null 2>&1 || true
-run_hyprctl keyword monitor "$MONITOR_NAME,$MODE_STR,$POS,$SCALE" >/dev/null 2>&1 || true
+# 1. Hyprland
+if command -v hyprctl >/dev/null 2>&1 && [ -n "${HYPRLAND_INSTANCE_SIGNATURE:-}" ]; then
+    run_as_user hyprctl eval "hl.monitor({ output = \"$MONITOR_NAME\", mode = \"$EVAL_MODE\", position = \"$POS\", scale = $SCALE })" >/dev/null 2>&1 || true
+    run_as_user hyprctl keyword monitor "$MONITOR_NAME,$MODE_STR,$POS,$SCALE" >/dev/null 2>&1 || true
+    exit 0
+fi
+
+# 2. KDE Plasma (kscreen-doctor)
+if command -v kscreen-doctor >/dev/null 2>&1; then
+    run_as_user kscreen-doctor "output.${MONITOR_NAME}.mode.${NUM_RATE}" >/dev/null 2>&1 || true
+    exit 0
+fi
+
+# 3. Sway / River / wlroots (wlr-randr)
+if command -v wlr-randr >/dev/null 2>&1 && [ -n "${WAYLAND_DISPLAY:-}" ]; then
+    run_as_user wlr-randr --output "$MONITOR_NAME" --mode "${RES}@${NUM_RATE}Hz" >/dev/null 2>&1 || true
+    exit 0
+fi
+
+# 4. X11 (xrandr)
+if command -v xrandr >/dev/null 2>&1 && [ -n "${DISPLAY:-}" ]; then
+    run_as_user xrandr --output "$MONITOR_NAME" --mode "$RES" --rate "$NUM_RATE" >/dev/null 2>&1 || true
+    exit 0
+fi

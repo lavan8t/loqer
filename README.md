@@ -4,13 +4,13 @@
 
 # Loqer
 
-[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Fedora-blue.svg)](https://getfedora.org)
+[![Platform](https://img.shields.io/badge/platform-Linux%20%7C%20Any%20Distro-blue.svg)](https://kernel.org)
 [![UI](https://img.shields.io/badge/ui-Quickshell%20Material%203-6750A4.svg)](https://quickshell.outfoxxed.me)
 [![License: MIT](https://img.shields.io/badge/license-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 Loqer manages power profiles, fan curves, GPU display routing, and battery thresholds on Lenovo LOQ 15IAX9 and Legion laptops running Linux.
 
-The project pairs a background daemon with a Quickshell desktop window and a command-line tool named `loq-ctl`.
+The project pairs a background daemon with a standalone Quickshell desktop window and a command-line tool named `loq-ctl`. It functions independently of any specific window manager or dotfile setup.
 
 ## Features
 
@@ -44,7 +44,7 @@ The daemon writes directly to the `legion_hwmon` sysfs attributes `pwm1_auto_poi
 - Battery conservation: caps charge at 80% via `/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode`.
 - Fn lock: toggles function key behavior in hardware.
 - Input locks: enables or disables the touchpad and Windows key.
-- Display: toggles panel overdrive and switches the internal display between 60Hz and 144Hz.
+- Display: toggles panel overdrive and switches internal panel refresh rate (60Hz / 144Hz) across Hyprland, KDE Plasma, Sway/wlroots, and X11.
 - Power limits: sets Intel RAPL PL1 and PL2 limits alongside GPU cTGP and PPAB targets.
 
 ## Repository structure
@@ -56,10 +56,11 @@ loqer/
 │   ├── loq-ctl                # Hardware control CLI
 │   ├── loq-generate-icon      # LOQ ring SVG and PNG generator
 │   ├── loq-hw-write           # Sudo helper for sysfs writes
-│   ├── loqer                  # Wrapper that starts the Quickshell GUI
-│   └── set-panel-refresh      # Hyprland monitor refresh rate script
+│   ├── loqer                  # Launcher for the Quickshell GUI
+│   └── set-panel-refresh      # Multi-DE internal panel refresh rate script
 ├── ui/
-│   └── loqControl.qml         # Quickshell Material 3 desktop window
+│   ├── loqControl.qml         # Standalone Material 3 desktop window
+│   └── fonts/                 # Bundled Google Sans Flex variable font
 ├── assets/
 │   ├── loqer.desktop          # Application launcher entry
 │   └── loqer.svg              # Ring emblem vector graphic
@@ -82,13 +83,19 @@ loqer/
 ### Requirements
 
 - A Lenovo LOQ or Legion laptop.
-- Linux with kernel drivers `legion_laptop` and `ideapad_acpi`.
-- `quickshell` and `imagemagick` installed.
-- Sudo access.
+- Linux kernel with `legion_laptop` and `ideapad_acpi` drivers.
+- `quickshell` and `imagemagick` packages.
+- Root / sudo access.
 
-### Install
+### One-liner (Release Archive)
 
-Run the install script as root:
+Download the release archive and run the installer:
+
+```bash
+curl -fsSL https://github.com/lavan8t/loqer/releases/latest/download/loqer-v1.0.0.tar.gz | tar -xz && cd loqer && sudo ./install.sh
+```
+
+### Git Clone
 
 ```bash
 git clone https://github.com/lavan8t/loqer.git
@@ -96,11 +103,11 @@ cd loqer
 sudo ./install.sh
 ```
 
-The script copies executables to `/usr/local/bin`, installs the Quickshell UI to `~/.config/quickshell/ii/loqControl.qml`, registers systemd units, installs shutdown hooks, and generates icons for the current desktop theme.
+The installer configures `/usr/local/bin`, installs the standalone UI and bundled Google Sans Flex font, configures sudo permissions for hardware writes, registers systemd units, and generates desktop application icons.
 
 ## CLI usage
 
-`loq-ctl` handles all hardware operations directly from the shell.
+`loq-ctl` handles hardware operations from the shell:
 
 ```bash
 # Power profiles

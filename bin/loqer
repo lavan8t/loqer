@@ -1,6 +1,40 @@
 #!/usr/bin/env bash
-CONFIG_FILE="${HOME:-/home/lavan}/.config/quickshell/ii/loqControl.qml"
-if [ ! -f "$CONFIG_FILE" ]; then
-    CONFIG_FILE="/home/lavan/.config/quickshell/ii/loqControl.qml"
+# Loqer Main GUI Launcher
+# Discovers loqControl.qml across system and local install paths
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+CANDIDATES=(
+    "${LOQER_UI_PATH:-}"
+    "/usr/local/share/loqer/ui/loqControl.qml"
+    "/usr/share/loqer/ui/loqControl.qml"
+    "${HOME}/.local/share/loqer/ui/loqControl.qml"
+    "${SCRIPT_DIR}/../ui/loqControl.qml"
+    "${HOME}/.config/quickshell/ii/loqControl.qml"
+)
+
+TARGET_CONFIG=""
+for path in "${CANDIDATES[@]}"; do
+    if [ -n "$path" ] && [ -f "$path" ]; then
+        TARGET_CONFIG="$path"
+        break
+    fi
+done
+
+if [ -z "$TARGET_CONFIG" ]; then
+    echo "Error: Could not locate loqControl.qml in standard paths." >&2
+    echo "Searched locations:" >&2
+    for path in "${CANDIDATES[@]}"; do
+        [ -n "$path" ] && echo "  - $path" >&2
+    done
+    exit 1
 fi
-exec /usr/bin/qs -p "$CONFIG_FILE" "$@"
+
+if ! command -v qs >/dev/null 2>&1; then
+    echo "Error: 'qs' (quickshell) is not installed or not in PATH." >&2
+    echo "Please install quickshell to run the Loqer graphical interface." >&2
+    exit 1
+fi
+
+exec qs -p "$TARGET_CONFIG" "$@"
