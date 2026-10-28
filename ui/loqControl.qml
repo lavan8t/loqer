@@ -28,8 +28,10 @@ ApplicationWindow {
     }
 
     Component.onCompleted: {
+        console.log("Loqer GoogleSans font loaded:", fontGoogleSans.name, "status:", fontGoogleSans.status);
         MaterialThemeLoader.reapplyTheme();
         loadCurveProc.running = true;
+        bootlogoStatusProc.running = true;
         root.reloadStatus();
     }
 
@@ -103,6 +105,21 @@ ApplicationWindow {
     property bool powerLimitsFeedback: false
     property bool initializedLimits: false
 
+    // Boot Logo state
+    property var bootlogoInfo: ({
+        "supported": true,
+        "enabled": false,
+        "width": 1920,
+        "height": 1080,
+        "preview_path": "",
+        "active_logo": null
+    })
+    property string selectedBootLogoPath: ""
+    property bool bootlogoApplying: false
+    property bool bootlogoFeedback: false
+    property bool bootlogoFeedbackSuccess: true
+    property string bootlogoFeedbackMsg: ""
+
     // Fan curve interactive state
     property var curvePoints: [
         {"step": 1, "temp": 45, "pwm1": 20, "pwm2": 25},
@@ -161,6 +178,81 @@ ApplicationWindow {
         id: powerFeedbackTimer
         interval: 2200
         onTriggered: root.powerLimitsFeedback = false
+    }
+
+    Timer {
+        id: bootlogoFeedbackTimer
+        interval: 3500
+        onTriggered: root.bootlogoFeedback = false
+    }
+
+    Process {
+        id: bootlogoStatusProc
+        command: ["/usr/local/bin/loq-ctl", "bootlogo", "status", "--json"]
+        stdout: StdioCollector {
+            id: bootlogoOut
+            onStreamFinished: {
+                try {
+                    let parsed = JSON.parse(bootlogoOut.text.trim());
+                    if (parsed && typeof parsed === "object") {
+                        root.bootlogoInfo = parsed;
+                    }
+                } catch(e) {}
+            }
+        }
+    }
+
+    Process {
+        id: pickImageProc
+        command: ["zenity", "--file-selection", "--title=Select Boot Logo Image", "--file-filter=Image files (PNG, JPG, BMP) | *.png *.jpg *.jpeg *.bmp *.gif"]
+        stdout: StdioCollector {
+            id: pickOut
+            onStreamFinished: {
+                let chosen = pickOut.text.trim();
+                if (chosen) {
+                    root.selectedBootLogoPath = chosen;
+                }
+            }
+        }
+    }
+
+    Process {
+        id: applyLogoProc
+        command: ["/usr/local/bin/loq-ctl", "bootlogo", "set", root.selectedBootLogoPath]
+        onExited: (exitCode, exitStatus) => {
+            root.bootlogoApplying = false;
+            if (exitCode === 0) {
+                root.bootlogoFeedbackMsg = "Boot logo successfully applied to UEFI!";
+                root.bootlogoFeedbackSuccess = true;
+            } else {
+                root.bootlogoFeedbackMsg = "Failed to apply boot logo. Check image.";
+                root.bootlogoFeedbackSuccess = false;
+            }
+            root.bootlogoFeedback = true;
+            bootlogoFeedbackTimer.restart();
+            bootlogoStatusProc.running = true;
+            root.reloadStatus();
+        }
+    }
+
+    Process {
+        id: resetLogoProc
+        command: ["/usr/local/bin/loq-ctl", "bootlogo", "reset"]
+        onExited: (exitCode, exitStatus) => {
+            root.bootlogoApplying = false;
+            if (exitCode === 0) {
+                root.bootlogoFeedbackMsg = "OEM stock Lenovo boot logo restored!";
+                root.bootlogoFeedbackSuccess = true;
+                root.selectedBootLogoPath = "";
+            } else {
+                root.bootlogoFeedbackMsg = "Failed to restore stock boot logo.";
+                root.bootlogoFeedbackSuccess = false;
+            }
+            root.bootlogoFeedback = true;
+            bootlogoFeedbackTimer.restart();
+            bootlogoStatusProc.running = true;
+            root.reloadStatus();
+        }
     }
 
     function reloadStatus() {
@@ -522,7 +614,7 @@ ApplicationWindow {
                     opacity: 1.0
 
                     Component.onCompleted: {
-                        sourceComponent = root.pages[0].component;
+                        sourceComponent = root.pages[root.currentPage].component;
                     }
 
                     Connections {
@@ -588,6 +680,7 @@ ApplicationWindow {
     Component {
         id: powerPage
         ContentPage {
+            contentY: 650
             baseWidth: 640
             forceWidth: true
 
@@ -750,6 +843,7 @@ ApplicationWindow {
     Component {
         id: curvesPage
         ContentPage {
+            contentY: 650
             baseWidth: 640
             forceWidth: true
 
@@ -1291,6 +1385,118 @@ ApplicationWindow {
                         materialIcon: "check"
                         mainText: "Apply Limits"
                         onClicked: root.applyPowerLimits(root.sliderPl1, root.sliderPl2, root.sliderCtgp, root.sliderPpab)
+                    }
+                }
+            }
+
+            // 6. UEFI Boot Logo Changer (Lenovo Legion / LOQ Firmware DIY Logo)
+            ContentSection {
+                icon: "image"
+                title: "UEFI Boot Logo"
+
+                NoticeBox {
+                    visible: root.bootlogoFeedback
+                    Layout.fillWidth: true
+                    materialIcon: root.bootlogoFeedbackSuccess ? "check_circle" : "error"
+                    text: root.bootlogoFeedbackMsg
+                }
+
+                Rectangle {
+                    Layout.fillWidth: true
+                    implicitHeight: bootlogoCardCol.implicitHeight + 24
+                    radius: Appearance.rounding.normal
+                    color: Appearance.m3colors.m3surfaceContainer
+                    clip: true
+
+                    ColumnLayout {
+                        id: bootlogoCardCol
+                        anchors {
+                            left: parent.left
+                            right: parent.right
+                            top: parent.top
+                            margins: 12
+                        }
+                        spacing: 12
+
+                        // Image Preview (ONLY visible when a custom logo is active or a new image is selected)
+                        Rectangle {
+                            id: logoPreviewRect
+                            visible: (root.selectedBootLogoPath.length > 0) || (root.bootlogoInfo.enabled && root.bootlogoInfo.preview_path.length > 0)
+                            Layout.fillWidth: true
+                            implicitHeight: 120
+                            radius: Appearance.rounding.small
+                            color: "#050505"
+                            border.width: 1
+                            border.color: Appearance.colors.colOutlineVariant
+                            clip: true
+
+                            Image {
+                                anchors.fill: parent
+                                anchors.margins: 4
+                                fillMode: Image.PreserveAspectFit
+                                source: (root.selectedBootLogoPath.length > 0)
+                                    ? ("file://" + root.selectedBootLogoPath)
+                                    : (root.bootlogoInfo.enabled && root.bootlogoInfo.preview_path.length > 0 ? ("file://" + root.bootlogoInfo.preview_path) : "")
+                                cache: false
+                            }
+                        }
+
+                        // Status Info
+                        ColumnLayout {
+                            Layout.fillWidth: true
+                            spacing: 2
+
+                            StyledText {
+                                text: root.bootlogoInfo.enabled
+                                    ? ("Custom Boot Logo Active" + (root.bootlogoInfo.active_logo ? ` (${root.bootlogoInfo.active_logo.filename})` : ""))
+                                    : "Factory OEM Boot Logo Active"
+                                font.pixelSize: Appearance.font.pixelSize.normal
+                                font.variableAxes: Appearance.font.variableAxes.title
+                                color: root.bootlogoInfo.enabled ? Appearance.colors.colPrimary : Appearance.colors.colOnSurface
+                            }
+
+                            StyledText {
+                                visible: root.selectedBootLogoPath.length > 0
+                                text: `Selected: ${root.selectedBootLogoPath.split('/').pop()}`
+                                font.pixelSize: Appearance.font.pixelSize.smaller
+                                font.variableAxes: Appearance.font.variableAxes.numbers
+                                color: Appearance.colors.colPrimary
+                            }
+                        }
+
+                        // Action Buttons
+                        RowLayout {
+                            Layout.fillWidth: true
+                            spacing: 8
+
+                            RippleButtonWithIcon {
+                                materialIcon: "folder_open"
+                                mainText: "Browse Image..."
+                                onClicked: {
+                                    if (!pickImageProc.running) pickImageProc.running = true;
+                                }
+                            }
+
+                            RippleButtonWithIcon {
+                                enabled: root.selectedBootLogoPath.length > 0 && !root.bootlogoApplying
+                                materialIcon: "upload"
+                                mainText: root.bootlogoApplying ? "Applying..." : "Apply Boot Logo"
+                                onClicked: {
+                                    root.bootlogoApplying = true;
+                                    applyLogoProc.running = true;
+                                }
+                            }
+
+                            RippleButtonWithIcon {
+                                enabled: root.bootlogoInfo.enabled && !root.bootlogoApplying
+                                materialIcon: "restore"
+                                mainText: "Restore Factory OEM"
+                                onClicked: {
+                                    root.bootlogoApplying = true;
+                                    resetLogoProc.running = true;
+                                }
+                            }
+                        }
                     }
                 }
             }

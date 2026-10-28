@@ -13,11 +13,14 @@ STATUS_FILE = "/run/user/1000/lenovo-power-status.json"
 LEGION_DIR = "/sys/devices/platform/legion"
 
 # Auto-elevate to root via passwordless sudo if writing hardware registers
-if os.geteuid() != 0 and len(sys.argv) > 1 and sys.argv[1] not in ("-h", "--help", "status", "fancurve"):
-    try:
-        os.execvp("sudo", ["sudo", "-n", "/usr/local/bin/loq-ctl"] + sys.argv[1:])
-    except Exception:
-        pass
+if os.geteuid() != 0 and len(sys.argv) > 1:
+    cmd = sys.argv[1].lower()
+    is_read_only = cmd in ("-h", "--help", "status", "fancurve") or (cmd == "bootlogo" and (len(sys.argv) <= 2 or sys.argv[2] in ("status", "get", "info", "--json", "-j")))
+    if not is_read_only:
+        try:
+            os.execvp("sudo", ["sudo", "-n", "/usr/local/bin/loq-ctl"] + sys.argv[1:])
+        except Exception:
+            pass
 
 def write_node(path, val):
     val_str = str(val).strip()
@@ -307,9 +310,311 @@ def set_powerlimits(args):
     if len(args) > 2: write_node("/sys/devices/platform/legion/gpu_ctgp_powerlimit", args[2])
     if len(args) > 3: write_node("/sys/devices/platform/legion/gpu_ppab_powerlimit", args[3])
 
+LBLDESP_PATH = "/sys/firmware/efi/efivars/LBLDESP-871455d0-5576-4fb8-9865-af0824463b9e"
+LBLDVC_PATH = "/sys/firmware/efi/efivars/LBLDVC-871455d1-5576-4fb8-9865-af0824463c9f"
+ESP_LOGO_DIR = "/boot/efi/EFI/Lenovo/Logo"
+PREVIEW_FILE = "/tmp/loqer_active_bootlogo.png"
+STATE_FILE = "/run/user/1000/loqer-bootlogo.json"
+
+def get_bootlogo_info():
+    if not os.path.exists(LBLDESP_PATH) or not os.path.exists(LBLDVC_PATH):
+        return {
+            "supported": False,
+            "enabled": False,
+            "error": "Lenovo DIY Boot Logo EFI variables not found on this system"
+        }
+    try:
+        with open(LBLDESP_PATH, "rb") as f:
+            esp_data = f.read()
+        with open(LBLDVC_PATH, "rb") as f:
+            dvc_data = f.read()
+    except Exception as e:
+        return {"supported": False, "enabled": False, "error": str(e)}
+
+    if len(esp_data) < 14 or len(dvc_data) < 44:
+        return {"supported": False, "enabled": False, "error": "Invalid EFI variable buffer size"}
+
+    esp_payload = esp_data[4:]
+    dvc_payload = dvc_data[4:]
+
+    firmware_enabled = (esp_payload[0] == 1)
+    max_w = int.from_bytes(esp_payload[1:5], "little")
+    max_h = int.from_bytes(esp_payload[5:9], "little")
+    support_byte = esp_payload[9]
+
+    formats = []
+    if support_byte & 0x01: formats.append("jpg")
+    if support_byte & 0x02: formats.append("tga")
+    if support_byte & 0x04: formats.append("pcx")
+    if support_byte & 0x08: formats.append("gif")
+    if support_byte & 0x10: formats.append("bmp")
+    if support_byte & 0x20: formats.append("png")
+
+    version = int.from_bytes(dvc_payload[0:4], "little")
+    hash_hex = dvc_payload[4:36].hex()
+
+    active_logo = None
+    has_esp_file = False
+    if os.path.isdir(ESP_LOGO_DIR):
+        try:
+            for fname in os.listdir(ESP_LOGO_DIR):
+                if fname.lower().startswith("mylogo"):
+                    has_esp_file = True
+                    fpath = os.path.join(ESP_LOGO_DIR, fname)
+                    sz = os.path.getsize(fpath)
+                    active_logo = {
+                        "filename": fname,
+                        "path": fpath,
+                        "size": sz
+                    }
+                    break
+        except Exception:
+            pass
+
+    if active_logo is None and os.path.isfile(STATE_FILE):
+        try:
+            with open(STATE_FILE, "r") as f:
+                st = json.load(f)
+                if st.get("active_logo"):
+                    active_logo = st.get("active_logo")
+                    has_esp_file = True
+        except Exception:
+            pass
+
+    enabled = firmware_enabled and (has_esp_file or active_logo is not None)
+
+    return {
+        "supported": True,
+        "enabled": enabled,
+        "firmware_enabled": firmware_enabled,
+        "width": max_w,
+        "height": max_h,
+        "formats": formats,
+        "version": f"0x{version:05x}",
+        "checksum": hash_hex,
+        "preview_path": PREVIEW_FILE if os.path.isfile(PREVIEW_FILE) and enabled else "",
+        "active_logo": active_logo
+    }
+
+def apply_bootlogo(img_path):
+    if not os.path.isfile(img_path):
+        sys.stderr.write(f"Error: File '{img_path}' does not exist.\n")
+        return False
+
+    info = get_bootlogo_info()
+    if not info.get("supported"):
+        sys.stderr.write("Error: Lenovo boot logo changer not supported on this device.\n")
+        return False
+
+    max_w = info["width"]
+    max_h = info["height"]
+    version = int(info["version"], 16)
+
+    try:
+        from PIL import Image
+    except ImportError:
+        sys.stderr.write("Error: Python Pillow is required for boot logo processing.\n")
+        return False
+
+    try:
+        img = Image.open(img_path)
+    except Exception as e:
+        sys.stderr.write(f"Error opening image: {e}\n")
+        return False
+
+    if img.width <= 0 or img.height <= 0:
+        sys.stderr.write("Error: Invalid image dimensions.\n")
+        return False
+
+    canvas = Image.new("RGB", (max_w, max_h), (0, 0, 0))
+    img_rgb = img.convert("RGB")
+    ratio = min(max_w / img_rgb.width, max_h / img_rgb.height)
+    new_w = max(1, int(img_rgb.width * ratio))
+    new_h = max(1, int(img_rgb.height * ratio))
+    if (new_w, new_h) != (img_rgb.width, img_rgb.height):
+        img_rgb = img_rgb.resize((new_w, new_h), Image.Resampling.LANCZOS)
+    
+    offset_x = (max_w - new_w) // 2
+    offset_y = (max_h - new_h) // 2
+    canvas.paste(img_rgb, (offset_x, offset_y))
+
+    temp_bmp = f"/tmp/loqer_bootlogo_{max_w}x{max_h}.bmp"
+    canvas.save(temp_bmp, "BMP")
+    sz = os.path.getsize(temp_bmp)
+
+    try:
+        canvas.save(PREVIEW_FILE, "PNG")
+        os.chmod(PREVIEW_FILE, 0o644)
+    except Exception:
+        pass
+
+    if sz > 1572864:
+        temp_jpg = f"/tmp/loqer_bootlogo_{max_w}x{max_h}.jpg"
+        canvas.save(temp_jpg, "JPEG", quality=95)
+        chosen_file = temp_jpg
+        ext = "jpg"
+        sz = os.path.getsize(temp_jpg)
+    else:
+        chosen_file = temp_bmp
+        ext = "bmp"
+
+    import hashlib
+    import zlib
+    with open(chosen_file, "rb") as f:
+        file_bytes = f.read()
+
+    sha256_hex = hashlib.sha256(file_bytes).hexdigest()
+    crc32_int = zlib.crc32(file_bytes[:512]) & 0xffffffff
+
+    import shutil
+    try:
+        os.makedirs(ESP_LOGO_DIR, exist_ok=True)
+        dst_named = os.path.join(ESP_LOGO_DIR, f"mylogo_{max_w}x{max_h}.{ext}")
+        dst_compat = os.path.join(ESP_LOGO_DIR, f"mylogo.{ext}")
+        shutil.copyfile(chosen_file, dst_named)
+        shutil.copyfile(chosen_file, dst_compat)
+
+        # Update LBLDESP
+        subprocess.run(["chattr", "-i", LBLDESP_PATH], check=True)
+        with open(LBLDESP_PATH, "rb") as f:
+            d = bytearray(f.read())
+        d[4] = 1
+        with open(LBLDESP_PATH, "wb") as f:
+            f.write(d)
+        subprocess.run(["chattr", "+i", LBLDESP_PATH], check=True)
+
+        # Update LBLDVC
+        subprocess.run(["chattr", "-i", LBLDVC_PATH], check=True)
+        with open(LBLDVC_PATH, "rb") as f:
+            d = bytearray(f.read())
+        if version == 0x20003:
+            d[8:40] = bytes.fromhex(sha256_hex)
+        elif version == 0x20000:
+            d[8:12] = crc32_int.to_bytes(4, "little")
+        with open(LBLDVC_PATH, "wb") as f:
+            f.write(d)
+        subprocess.run(["chattr", "+i", LBLDVC_PATH], check=True)
+
+        subprocess.run(["sync"], check=False)
+
+        state_data = {
+            "supported": True,
+            "enabled": True,
+            "width": max_w,
+            "height": max_h,
+            "version": f"0x{version:05x}",
+            "checksum": sha256_hex,
+            "active_logo": {
+                "filename": f"mylogo_{max_w}x{max_h}.{ext}",
+                "size": sz,
+                "format": ext.upper()
+            }
+        }
+        for sfile in (STATE_FILE, "/tmp/loqer_bootlogo_state.json"):
+            try:
+                with open(sfile, "w") as sf:
+                    json.dump(state_data, sf, indent=2)
+                os.chmod(sfile, 0o644)
+            except Exception:
+                pass
+
+        print(f"Boot logo applied successfully: {max_w}x{max_h} ({ext.upper()}, {sz} bytes).")
+        return True
+    except Exception as e:
+        sys.stderr.write(f"Failed to apply boot logo: {e}\n")
+        return False
+
+def reset_bootlogo():
+    info = get_bootlogo_info()
+    if not info.get("supported"):
+        sys.stderr.write("Error: Lenovo boot logo changer not supported on this device.\n")
+        return False
+
+    version = int(info["version"], 16)
+    import shutil
+    try:
+        if os.path.exists(ESP_LOGO_DIR):
+            shutil.rmtree(ESP_LOGO_DIR)
+        if os.path.exists(PREVIEW_FILE):
+            try: os.remove(PREVIEW_FILE)
+            except Exception: pass
+
+        # Update LBLDESP
+        subprocess.run(["chattr", "-i", LBLDESP_PATH], check=True)
+        with open(LBLDESP_PATH, "rb") as f:
+            d = bytearray(f.read())
+        d[4] = 0
+        with open(LBLDESP_PATH, "wb") as f:
+            f.write(d)
+        subprocess.run(["chattr", "+i", LBLDESP_PATH], check=True)
+
+        # Update LBLDVC
+        subprocess.run(["chattr", "-i", LBLDVC_PATH], check=True)
+        with open(LBLDVC_PATH, "rb") as f:
+            d = bytearray(f.read())
+        if version == 0x20000:
+            d[8:12] = b"\x00" * 4
+        else:
+            d[8:44] = b"\x00" * 36
+        with open(LBLDVC_PATH, "wb") as f:
+            f.write(d)
+        subprocess.run(["chattr", "+i", LBLDVC_PATH], check=True)
+
+        subprocess.run(["sync"], check=False)
+
+        state_data = {
+            "supported": True,
+            "enabled": False,
+            "width": info["width"],
+            "height": info["height"],
+            "version": f"0x{version:05x}",
+            "checksum": "00" * 32,
+            "active_logo": None
+        }
+        for sfile in (STATE_FILE, "/tmp/loqer_bootlogo_state.json"):
+            try:
+                with open(sfile, "w") as sf:
+                    json.dump(state_data, sf, indent=2)
+                os.chmod(sfile, 0o644)
+            except Exception:
+                pass
+
+        print("Boot logo reset to OEM stock Lenovo logo successfully.")
+        return True
+    except Exception as e:
+        sys.stderr.write(f"Failed to reset boot logo: {e}\n")
+        return False
+
+def handle_bootlogo(args):
+    subcmd = args[0].lower() if args else "status"
+    if subcmd in ("status", "get", "info"):
+        as_json = "--json" in args or "-j" in args
+        info = get_bootlogo_info()
+        if as_json:
+            print(json.dumps(info, indent=2))
+        else:
+            status_str = "Custom Logo Active" if info.get("enabled") else "OEM Stock Logo Active"
+            print(f"Status: {status_str}")
+            print(f"Supported: {info.get('supported')}")
+            print(f"Max Resolution: {info.get('width')}x{info.get('height')}")
+            print(f"Supported Formats: {', '.join(info.get('formats', []))}")
+            if info.get("active_logo"):
+                logo = info["active_logo"]
+                print(f"Active Logo: {logo.get('filename')} ({logo.get('size')} bytes)")
+    elif subcmd == "set":
+        if len(args) < 2:
+            sys.stderr.write("Usage: loq-ctl bootlogo set <image_path>\n")
+            sys.exit(1)
+        apply_bootlogo(args[1])
+    elif subcmd in ("reset", "restore", "clear"):
+        reset_bootlogo()
+    else:
+        sys.stderr.write("Usage: loq-ctl bootlogo [status|set <image_path>|reset]\n")
+        sys.exit(1)
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: loq-ctl [profile|mux|fancurve|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|status] [value...]")
+        print("Usage: loq-ctl [profile|mux|fancurve|bootlogo|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|status] [value...]")
         return
 
     cmd = sys.argv[1].lower()
@@ -321,6 +626,8 @@ def main():
         "igpumode": lambda: set_mux(args[0] if args else ""),
         "fancurve": lambda: handle_fancurve(args),
         "fan": lambda: handle_fancurve(args),
+        "bootlogo": lambda: handle_bootlogo(args),
+        "logo": lambda: handle_bootlogo(args),
         "conservation": lambda: set_ideapad_attribute("conservation_mode", args[0] if args else ""),
         "fn_lock": lambda: set_ideapad_attribute("fn_lock", args[0] if args else ""),
         "fnlock": lambda: set_ideapad_attribute("fn_lock", args[0] if args else ""),

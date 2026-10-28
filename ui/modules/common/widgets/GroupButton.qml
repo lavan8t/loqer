@@ -137,5 +137,6 @@ Button {
 
     contentItem: StyledText {
         text: root.buttonText
+        font.variableAxes: Appearance.font.variableAxes.button
     }
 }

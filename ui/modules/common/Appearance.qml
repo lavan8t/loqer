@@ -197,25 +197,43 @@ Singleton {
 
     font: QtObject {
         property QtObject family: QtObject {
-            property string main: "Google Sans Flex, system-ui, -apple-system, sans-serif"
-            property string numbers: "Google Sans Flex, system-ui, -apple-system, sans-serif"
-            property string title: "Google Sans Flex, system-ui, -apple-system, sans-serif"
+            property string main: "Google Sans Flex"
+            property string numbers: "Google Sans Flex"
+            property string title: "Google Sans Flex"
             property string iconMaterial: "Material Symbols Rounded"
             property string iconNerd: "Material Symbols Rounded, Symbols Nerd Font Mono, monospace"
             property string monospace: "monospace"
-            property string reading: "Google Sans Flex, system-ui, -apple-system, sans-serif"
-            property string expressive: "Google Sans Flex, system-ui, -apple-system, sans-serif"
+            property string reading: "Google Sans Flex"
+            property string expressive: "Google Sans Flex"
         }
         property QtObject variableAxes: QtObject {
             property var main: ({
-                "wght": 450,
+                "wght": 420,
                 "wdth": 100,
             })
             property var numbers: ({
-                "wght": 450,
+                "wght": 520,
+                "wdth": 98,
             })
-            property var title: ({ // Slightly bold weight for title
-                "wght": 550, // Weight (Lowered to compensate for increased grade)
+            property var title: ({
+                "wght": 600,
+                "wdth": 104,
+            })
+            property var subtitle: ({
+                "wght": 500,
+                "wdth": 102,
+            })
+            property var button: ({
+                "wght": 500,
+                "wdth": 100,
+            })
+            property var label: ({
+                "wght": 480,
+                "wdth": 98,
+            })
+            property var caption: ({
+                "wght": 420,
+                "wdth": 98,
             })
         }
         property QtObject pixelSize: QtObject {

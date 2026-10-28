@@ -241,7 +241,8 @@ def update_status_json(profile, target_state, ac_on):
         "battery_health": bat_health,
         "battery_cycles": bat_cycles,
         "battery_wh_full": round(bat_full / 1000000.0, 1),
-        "battery_wh_design": round(bat_design / 1000000.0, 1)
+        "battery_wh_design": round(bat_design / 1000000.0, 1),
+        "bootlogo_enabled": (len(read_file("/sys/firmware/efi/efivars/LBLDESP-871455d0-5576-4fb8-9865-af0824463b9e", "")) > 0 and os.path.exists("/boot/efi/EFI/Lenovo/Logo"))
     }
     json_bytes = json.dumps(data, indent=2).encode("utf-8")
 

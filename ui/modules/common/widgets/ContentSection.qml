@@ -22,7 +22,7 @@ ColumnLayout {
         StyledText {
             text: root.title
             font.pixelSize: Appearance.font.pixelSize.larger
-            font.weight: Font.Medium
+            font.variableAxes: Appearance.font.variableAxes.title
             color: Appearance.colors.colOnSecondaryContainer
         }
     }

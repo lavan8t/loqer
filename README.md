@@ -39,6 +39,14 @@ The daemon writes directly to the `legion_hwmon` sysfs attributes `pwm1_auto_poi
 - Ships presets for quiet, balanced, performance, and maximum cooling.
 - Reverts control to the embedded controller with the auto preset.
 
+### UEFI Boot Logo Changer
+
+Loqer supports Lenovo's native InsydeH2O UEFI DIY Boot Logo mechanism (as supported on LOQ 15IAX9 and Legion models):
+- Auto-fits, centers, and pads images onto the display canvas (up to 1920x1080).
+- Validates formats (PNG, JPG, BMP) and firmware buffer limits (under 1.5MB).
+- Updates UEFI variables `LBLDESP` and `LBLDVC` (SHA256 / CRC32 integrity checksums) via kernel efivars.
+- Reverts cleanly to the factory OEM Lenovo boot splash with one click or command.
+
 ### Hardware controls
 
 - Battery conservation: caps charge at 80% via `/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode`.
@@ -46,6 +54,7 @@ The daemon writes directly to the `legion_hwmon` sysfs attributes `pwm1_auto_poi
 - Input locks: enables or disables the touchpad and Windows key.
 - Display: toggles panel overdrive and switches internal panel refresh rate (60Hz / 144Hz) across Hyprland, KDE Plasma, Sway/wlroots, and X11.
 - Power limits: sets Intel RAPL PL1 and PL2 limits alongside GPU cTGP and PPAB targets.
+- Typography: bundled Google Sans Flex variable font with tuned width (`wdth: 98-104`) and weight axes for Material 3 metrics and headers.
 
 ## Repository structure
 
@@ -136,6 +145,11 @@ loq-ctl fancurve set 5 70 80 85
 
 # Power envelopes (PL1, PL2, cTGP, PPAB in watts)
 loq-ctl powerlimits 65 125 105 25
+
+# UEFI Boot Logo management
+loq-ctl bootlogo status
+loq-ctl bootlogo set /path/to/custom_logo.png
+loq-ctl bootlogo reset
 
 # Read telemetry JSON
 loq-ctl status
