@@ -584,23 +584,26 @@ ApplicationWindow {
 
     function reloadStatus() {
         try {
-            let txt = statusFile.text().trim();
-            if (!txt || !txt.startsWith("{")) {
+            statusFile.reload();
+            let txt = statusFile.text();
+            if (!txt || !txt.trim().startsWith("{")) {
                 let sysFile = (Quickshell.env("XDG_RUNTIME_DIR") ? Quickshell.env("XDG_RUNTIME_DIR") : "/run/user/1000") + "/lenovo-power-status.json";
                 let f = Io.file(sysFile);
-                if (f) txt = f.read().trim();
+                if (f) txt = f.read();
             }
-            if (txt && txt.startsWith("{")) {
-                let oldProfile = root.statusData.profile;
-                root.statusData = JSON.parse(txt);
-                if (oldProfile !== root.statusData.profile) {
+            if (txt && txt.trim().startsWith("{")) {
+                let parsed = JSON.parse(txt.trim());
+                let oldProfile = root.statusData ? root.statusData.profile : null;
+                root.statusData = parsed;
+                root.statusDataChanged();
+                if (oldProfile && oldProfile !== parsed.profile) {
                     bigLoqRing.triggerSpin();
                 }
                 if (!root.initializedLimits) {
-                    root.sliderPl1 = root.statusData.pl1_w ?? 55;
-                    root.sliderPl2 = root.statusData.pl2_w ?? 115;
-                    root.sliderCtgp = root.statusData.gpu_ctgp_w ?? 105;
-                    root.sliderPpab = root.statusData.gpu_ppab_w ?? 25;
+                    root.sliderPl1 = parsed.pl1_w ?? 55;
+                    root.sliderPl2 = parsed.pl2_w ?? 115;
+                    root.sliderCtgp = parsed.gpu_ctgp_w ?? 105;
+                    root.sliderPpab = parsed.gpu_ppab_w ?? 25;
                     root.initializedLimits = true;
                 }
             }
@@ -609,30 +612,33 @@ ApplicationWindow {
 
     function executeCommand(action, val) {
         Quickshell.execDetached(["sudo", "-n", "/usr/local/bin/loq-ctl", action, String(val)]);
+        let updated = Object.assign({}, root.statusData);
         if (action === "profile") {
-            root.statusData.profile = val;
+            updated.profile = val;
             bigLoqRing.triggerSpin();
         } else if (action === "mux") {
-            root.statusData.igpu_mode = parseInt(val);
+            updated.igpu_mode = parseInt(val);
         } else if (action === "conservation") {
-            root.statusData.conservation_mode = (val === "1");
+            updated.conservation_mode = (val === "1");
         } else if (action === "fn_lock") {
-            root.statusData.fn_lock = (val === "1");
+            updated.fn_lock = (val === "1");
         } else if (action === "fan_fullspeed") {
-            root.statusData.fan_fullspeed = (val === "1");
+            updated.fan_fullspeed = (val === "1");
         } else if (action === "touchpad") {
-            root.statusData.touchpad = (val === "1");
+            updated.touchpad = (val === "1");
         } else if (action === "winkey") {
-            root.statusData.winkey = (val === "1");
+            updated.winkey = (val === "1");
         } else if (action === "overdrive") {
-            root.statusData.overdrive = (val === "1");
+            updated.overdrive = (val === "1");
         } else if (action === "kbd") {
-            root.statusData.kbd_backlight = parseInt(val);
+            updated.kbd_backlight = parseInt(val);
         } else if (action === "ioport") {
-            root.statusData.ioport_light = (val === "1");
+            updated.ioport_light = (val === "1");
         } else if (action === "refresh") {
-            root.statusData.display_hz = parseInt(val);
+            updated.display_hz = parseInt(val);
         }
+        root.statusData = updated;
+        root.statusDataChanged();
     }
 
     function applyFanPreset(preset) {
@@ -767,50 +773,48 @@ ApplicationWindow {
                             height: 64
 
                             property real ringThickness: 11.6 // 20% thicker
-                            property real arcRadius: 32 - (ringThickness / 2)
                             property color ringColor: root.getProfileColor(root.statusData.profile)
                             Behavior on ringColor { ColorAnimation { duration: 250; easing.type: Easing.OutCubic } }
 
-                            Shape {
+                            Canvas {
+                                id: loqRingCanvas
                                 anchors.fill: parent
-                                layer.enabled: true
-                                layer.smooth: true
-                                preferredRendererType: Shape.CurveRenderer
+                                renderTarget: Canvas.FramebufferObject
+                                antialiasing: true
 
-                                ShapePath {
-                                    strokeColor: bigLoqRing.ringColor
-                                    strokeWidth: bigLoqRing.ringThickness
-                                    fillColor: "transparent"
-                                    capStyle: ShapePath.FlatCap
-                                    PathAngleArc {
-                                        moveToStart: true
-                                        centerX: 32; centerY: 32
-                                        radiusX: bigLoqRing.arcRadius; radiusY: bigLoqRing.arcRadius
-                                        startAngle: -22.5; sweepAngle: 105
+                                onPaint: {
+                                    let ctx = getContext("2d");
+                                    ctx.reset();
+                                    let cx = width / 2;
+                                    let cy = height / 2;
+                                    let rOut = 31;
+                                    let rIn = 31 - bigLoqRing.ringThickness;
+                                    let cutWidth = 6.2; // uniform parallel rectangular slot width
+
+                                    // 1. Draw solid donut ring
+                                    ctx.beginPath();
+                                    ctx.arc(cx, cy, rOut, 0, 2 * Math.PI, false);
+                                    ctx.arc(cx, cy, rIn, 2 * Math.PI, 0, true);
+                                    ctx.closePath();
+                                    ctx.fillStyle = bigLoqRing.ringColor;
+                                    ctx.fill();
+
+                                    // 2. Cut 3 parallel rectangular slots (rectangle cuts, not angular)
+                                    ctx.globalCompositeOperation = "destination-out";
+                                    let angles = [90 * Math.PI / 180, 210 * Math.PI / 180, 330 * Math.PI / 180];
+                                    for (let a of angles) {
+                                        ctx.save();
+                                        ctx.translate(cx, cy);
+                                        ctx.rotate(a);
+                                        ctx.fillRect(-cutWidth / 2, 0, cutWidth, rOut + 4);
+                                        ctx.restore();
                                     }
                                 }
-                                ShapePath {
-                                    strokeColor: bigLoqRing.ringColor
-                                    strokeWidth: bigLoqRing.ringThickness
-                                    fillColor: "transparent"
-                                    capStyle: ShapePath.FlatCap
-                                    PathAngleArc {
-                                        moveToStart: true
-                                        centerX: 32; centerY: 32
-                                        radiusX: bigLoqRing.arcRadius; radiusY: bigLoqRing.arcRadius
-                                        startAngle: 97.5; sweepAngle: 105
-                                    }
-                                }
-                                ShapePath {
-                                    strokeColor: bigLoqRing.ringColor
-                                    strokeWidth: bigLoqRing.ringThickness
-                                    fillColor: "transparent"
-                                    capStyle: ShapePath.FlatCap
-                                    PathAngleArc {
-                                        moveToStart: true
-                                        centerX: 32; centerY: 32
-                                        radiusX: bigLoqRing.arcRadius; radiusY: bigLoqRing.arcRadius
-                                        startAngle: 217.5; sweepAngle: 105
+
+                                Connections {
+                                    target: bigLoqRing
+                                    function onRingColorChanged() {
+                                        loqRingCanvas.requestPaint();
                                     }
                                 }
                             }

@@ -248,12 +248,11 @@ def update_status_json(profile, target_state, ac_on):
     for path in STATUS_FILES:
         target_dir = os.path.dirname(path)
         if os.path.isdir(target_dir):
-            tmp_path = path + ".tmp"
             try:
-                with open(tmp_path, "wb") as f:
+                # Write in-place to preserve file inode so inotify file watchers trigger immediately
+                with open(path, "wb") as f:
                     f.write(json_bytes)
-                os.chmod(tmp_path, 0o644)
-                os.replace(tmp_path, path)
+                os.chmod(path, 0o644)
             except Exception:
                 pass
 
