@@ -63,10 +63,10 @@ CANDIDATES=(
     "${LOQER_UI_PATH:-}"
     "${SCRIPT_DIR}/../ui/loqControl.qml"
     "$(pwd)/ui/loqControl.qml"
-    "/usr/local/share/loqer/ui/loqControl.qml"
-    "/usr/share/loqer/ui/loqControl.qml"
-    "${HOME}/.local/share/loqer/ui/loqControl.qml"
-    "${HOME}/.config/quickshell/ii/loqControl.qml"
+    "${LOQER_SYSTEM_UI_DIR:-/usr/local/share/loqer/ui}/loqControl.qml"
+    "${LOQER_PKG_UI_DIR:-/usr/share/loqer/ui}/loqControl.qml"
+    "${LOQER_USER_SHARE_DIR:-${HOME}/.local/share/loqer/ui}/loqControl.qml"
+    "${LOQER_USER_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/quickshell/ii}/loqControl.qml"
 )
 
 TARGET_CONFIG=""
@@ -84,6 +84,54 @@ if [ -z "$TARGET_CONFIG" ]; then
         [ -n "$path" ] && echo "  - $path" >&2
     done
     exit 1
+fi
+
+# -------------------------------------------------------------
+# UI Sync Verification & Diagnostic Notice
+# -------------------------------------------------------------
+verify_ui_sync() {
+    # If LOQER_UI_PATH is explicitly set, user requested this exact path; skip diagnostic
+    [ -n "${LOQER_UI_PATH:-}" ] && return 0
+
+    local repo_source="${SCRIPT_DIR}/../ui/loqControl.qml"
+    if [ ! -f "$repo_source" ]; then
+        return 0
+    fi
+
+    local install_candidates=(
+        "${LOQER_SYSTEM_UI_DIR:-/usr/local/share/loqer/ui}/loqControl.qml"
+        "${LOQER_PKG_UI_DIR:-/usr/share/loqer/ui}/loqControl.qml"
+        "${LOQER_USER_SHARE_DIR:-${HOME}/.local/share/loqer/ui}/loqControl.qml"
+        "${LOQER_USER_CONFIG_DIR:-${XDG_CONFIG_HOME:-${HOME}/.config}/quickshell/ii}/loqControl.qml"
+    )
+
+    local divergent=0
+
+    if [ "$TARGET_CONFIG" != "$repo_source" ]; then
+        if ! cmp -s "$repo_source" "$TARGET_CONFIG"; then
+            divergent=1
+        fi
+    else
+        for inst in "${install_candidates[@]}"; do
+            if [ -f "$inst" ] && [ "$inst" != "$repo_source" ]; then
+                if ! cmp -s "$repo_source" "$inst"; then
+                    divergent=1
+                    break
+                fi
+            fi
+        done
+    fi
+
+    if [ "$divergent" -eq 1 ]; then
+        echo "[LOQer] Notice: UI file loaded from $TARGET_CONFIG"
+    fi
+}
+
+verify_ui_sync
+
+if [ "${LOQER_DRY_RUN:-0}" = "1" ] || [ "${1:-}" = "--dry-run" ] || [ "${1:-}" = "--print-path" ]; then
+    echo "$TARGET_CONFIG"
+    exit 0
 fi
 
 if ! command -v qs >/dev/null 2>&1; then
