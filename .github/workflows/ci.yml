@@ -12,8 +12,26 @@ permissions:
   contents: write
 
 jobs:
+  test-and-validate:
+    name: Test and Validate Quality Guardrails
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run Quality Guardrails
+        run: |
+          chmod +x scripts/check.sh tests/run_tests.py
+          ./scripts/check.sh
+
   build-linux:
     name: Build Linux Distribution
+    needs: [test-and-validate]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
@@ -34,6 +52,7 @@ jobs:
 
   build-windows:
     name: Build Windows x64 Distribution
+    needs: [test-and-validate]
     runs-on: ubuntu-latest
     container:
       image: fedora:41
