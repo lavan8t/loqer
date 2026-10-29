@@ -101,6 +101,8 @@ ApplicationWindow {
         turbo: true,
         epp: "balance_performance",
         gpu_status: "active",
+        gpu_usage: 0,
+        gpu_power_w: 0.0,
         display_hz: 144,
         igpu_mode: 2,
         fan1_rpm: 0,
@@ -781,7 +783,9 @@ ApplicationWindow {
                             {
                                 "icon": "videogame_asset",
                                 "label": "RTX 4060 Thermals & Fan",
-                                "value": `${root.statusData.gpu_temp}°C (${root.statusData.fan2_rpm} RPM)`
+                                "value": (root.statusData.gpu_status === "active")
+                                    ? `${root.statusData.gpu_temp}°C · ${root.statusData.gpu_usage ?? 0}% Load (${root.statusData.fan2_rpm} RPM)`
+                                    : `${root.statusData.gpu_temp}°C · Suspended (${root.statusData.fan2_rpm} RPM)`
                             }
                         ]
                         delegate: Rectangle {
@@ -1311,12 +1315,13 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "CPU Long-Term (PL1)"
-                        Layout.preferredWidth: 230
-                        Layout.minimumWidth: 230
+                        Layout.preferredWidth: 215
+                        Layout.minimumWidth: 215
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 100
                         configuration: StyledSlider.Configuration.XS
                         usePercentTooltip: false
                         from: 15
@@ -1328,8 +1333,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPl1}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 46
-                        Layout.minimumWidth: 46
+                        Layout.preferredWidth: 50
+                        Layout.minimumWidth: 50
                         horizontalAlignment: Text.AlignRight
                         color: Appearance.colors.colPrimary
                     }
@@ -1346,12 +1351,13 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "CPU Short-Term (PL2)"
-                        Layout.preferredWidth: 230
-                        Layout.minimumWidth: 230
+                        Layout.preferredWidth: 215
+                        Layout.minimumWidth: 215
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 100
                         configuration: StyledSlider.Configuration.XS
                         usePercentTooltip: false
                         from: 25
@@ -1363,8 +1369,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPl2}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 46
-                        Layout.minimumWidth: 46
+                        Layout.preferredWidth: 50
+                        Layout.minimumWidth: 50
                         horizontalAlignment: Text.AlignRight
                         color: Appearance.colors.colPrimary
                     }
@@ -1381,12 +1387,13 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "GPU Base cTGP"
-                        Layout.preferredWidth: 230
-                        Layout.minimumWidth: 230
+                        Layout.preferredWidth: 215
+                        Layout.minimumWidth: 215
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 100
                         configuration: StyledSlider.Configuration.XS
                         usePercentTooltip: false
                         from: 45
@@ -1398,8 +1405,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderCtgp}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 46
-                        Layout.minimumWidth: 46
+                        Layout.preferredWidth: 50
+                        Layout.minimumWidth: 50
                         horizontalAlignment: Text.AlignRight
                         color: "#EF4444"
                     }
@@ -1416,12 +1423,13 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "GPU Dynamic Boost (PPAB)"
-                        Layout.preferredWidth: 230
-                        Layout.minimumWidth: 230
+                        Layout.preferredWidth: 215
+                        Layout.minimumWidth: 215
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
                         Layout.fillWidth: true
+                        Layout.minimumWidth: 100
                         configuration: StyledSlider.Configuration.XS
                         usePercentTooltip: false
                         from: 5
@@ -1433,8 +1441,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPpab}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 46
-                        Layout.minimumWidth: 46
+                        Layout.preferredWidth: 50
+                        Layout.minimumWidth: 50
                         horizontalAlignment: Text.AlignRight
                         color: "#EF4444"
                     }

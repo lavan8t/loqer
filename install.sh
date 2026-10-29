@@ -19,10 +19,12 @@ install -m 755 "$SCRIPT_DIR/bin/loq-hw-write" /usr/local/bin/loq-hw-write
 install -m 755 "$SCRIPT_DIR/bin/loq-generate-icon" /usr/local/bin/loq-generate-icon
 install -m 755 "$SCRIPT_DIR/bin/lenovo-power-daemon" /usr/local/bin/lenovo-power-daemon
 install -m 755 "$SCRIPT_DIR/bin/set-panel-refresh" /usr/local/bin/set-panel-refresh
+install -m 755 "$SCRIPT_DIR/bin/prime-run" /usr/local/bin/prime-run
 
 mkdir -p "$USER_HOME/.local/bin"
 install -m 755 "$SCRIPT_DIR/bin/loqer" "$USER_HOME/.local/bin/loqer"
 install -m 755 "$SCRIPT_DIR/bin/set-panel-refresh" "$USER_HOME/.local/bin/set-panel-refresh"
+install -m 755 "$SCRIPT_DIR/bin/prime-run" "$USER_HOME/.local/bin/prime-run"
 chown -R "$TARGET_USER:" "$USER_HOME/.local/bin"
 
 echo "=== 2. Installing Quickshell Standalone UI & Bundled Fonts ==="

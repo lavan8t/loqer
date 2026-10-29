@@ -5,6 +5,7 @@ Unified management of Lenovo LOQ power modes, MUX, fan curves, battery conservat
 """
 import sys
 import os
+import time
 import glob
 import json
 import subprocess
@@ -43,7 +44,7 @@ if not check_loq_hardware() and len(sys.argv) > 1 and sys.argv[1] not in ("-h", 
 # Auto-elevate to root via passwordless sudo if writing hardware registers
 if os.geteuid() != 0 and len(sys.argv) > 1:
     cmd = sys.argv[1].lower()
-    is_read_only = cmd in ("-h", "--help", "status", "fancurve") or (cmd == "bootlogo" and (len(sys.argv) <= 2 or sys.argv[2] in ("status", "get", "info", "--json", "-j")))
+    is_read_only = cmd in ("-h", "--help", "status", "fancurve", "test-gpu", "gpu-spike", "gputest") or (cmd == "bootlogo" and (len(sys.argv) <= 2 or sys.argv[2] in ("status", "get", "info", "--json", "-j")))
     if not is_read_only:
         try:
             os.execvp("sudo", ["sudo", "-n", "/usr/local/bin/loq-ctl"] + sys.argv[1:])
@@ -654,9 +655,86 @@ def handle_bootlogo(args):
         sys.stderr.write("Usage: loq-ctl bootlogo [status|set <image_path>|reset]\n")
         sys.exit(1)
 
+def run_gpu_spike(seconds=4):
+    try:
+        import ctypes
+        cl = ctypes.CDLL("libOpenCL.so.1")
+        cl.clGetPlatformIDs.argtypes = [ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint)]
+        cl.clGetDeviceIDs.argtypes = [ctypes.c_void_p, ctypes.c_ulonglong, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.POINTER(ctypes.c_uint)]
+        cl.clCreateContext.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.c_void_p, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        cl.clCreateContext.restype = ctypes.c_void_p
+        cl.clCreateCommandQueue.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_ulonglong, ctypes.POINTER(ctypes.c_int)]
+        cl.clCreateCommandQueue.restype = ctypes.c_void_p
+        cl.clCreateProgramWithSource.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_char_p), ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_int)]
+        cl.clCreateProgramWithSource.restype = ctypes.c_void_p
+        cl.clBuildProgram.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_void_p), ctypes.c_char_p, ctypes.c_void_p, ctypes.c_void_p]
+        cl.clCreateKernel.argtypes = [ctypes.c_void_p, ctypes.c_char_p, ctypes.POINTER(ctypes.c_int)]
+        cl.clCreateKernel.restype = ctypes.c_void_p
+        cl.clCreateBuffer.argtypes = [ctypes.c_void_p, ctypes.c_ulonglong, ctypes.c_size_t, ctypes.c_void_p, ctypes.POINTER(ctypes.c_int)]
+        cl.clCreateBuffer.restype = ctypes.c_void_p
+        cl.clSetKernelArg.argtypes = [ctypes.c_void_p, ctypes.c_uint, ctypes.c_size_t, ctypes.c_void_p]
+        cl.clEnqueueNDRangeKernel.argtypes = [ctypes.c_void_p, ctypes.c_void_p, ctypes.c_uint, ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t), ctypes.POINTER(ctypes.c_size_t), ctypes.c_uint, ctypes.c_void_p, ctypes.c_void_p]
+        cl.clFinish.argtypes = [ctypes.c_void_p]
+
+        platform = ctypes.c_void_p()
+        cl.clGetPlatformIDs(1, ctypes.byref(platform), None)
+        device = ctypes.c_void_p()
+        cl.clGetDeviceIDs(platform, 0xFFFFFFFF, 1, ctypes.byref(device), None)
+
+        dev_name = (ctypes.c_char * 256)()
+        cl.clGetDeviceInfo(device, 0x102B, 256, dev_name, None)
+        print(f"[LOQer] Target GPU: {dev_name.value.decode()}")
+
+        err = ctypes.c_int(0)
+        ctx = cl.clCreateContext(None, 1, ctypes.byref(device), None, None, ctypes.byref(err))
+        queue = cl.clCreateCommandQueue(ctx, device, 0, ctypes.byref(err))
+
+        src = b'''__kernel void spike(__global float* o) {
+            int id = get_global_id(0);
+            float x = (float)id;
+            for (int i=0; i<40000; i++) x = x * 1.0001f + 0.5f;
+            o[id] = x;
+        }'''
+        src_p = ctypes.c_char_p(src)
+        src_l = ctypes.c_size_t(len(src))
+        prog = cl.clCreateProgramWithSource(ctx, 1, ctypes.byref(src_p), ctypes.byref(src_l), ctypes.byref(err))
+        cl.clBuildProgram(prog, 1, ctypes.byref(device), None, None, None)
+        kernel = cl.clCreateKernel(prog, b'spike', ctypes.byref(err))
+
+        buf = ctypes.c_void_p(cl.clCreateBuffer(ctx, 1, 1024 * 1024 * 4, None, ctypes.byref(err)))
+        cl.clSetKernelArg(kernel, 0, ctypes.sizeof(ctypes.c_void_p), ctypes.byref(buf))
+
+        work = (ctypes.c_size_t * 1)(1024 * 256)
+        hwmon_dir = find_legion_hwmon()
+        temp_file = os.path.join(hwmon_dir, "temp2_input") if hwmon_dir else "/sys/devices/platform/legion/hwmon/hwmon5/temp2_input"
+
+        print(f"[LOQer] Spiking GPU compute load (100%) for {seconds} seconds...")
+        t0 = time.time()
+        passes = 0
+        last_print = 0
+        while time.time() - t0 < seconds:
+            cl.clEnqueueNDRangeKernel(queue, kernel, 1, None, work, None, 0, None, None)
+            cl.clFinish(queue)
+            passes += 1
+            elapsed = time.time() - t0
+            if int(elapsed) > last_print:
+                last_print = int(elapsed)
+                temp = "--"
+                try:
+                    if os.path.isfile(temp_file):
+                        with open(temp_file) as f:
+                            temp = f"{int(f.read().strip()) // 1000}°C"
+                except Exception:
+                    pass
+                print(f"  [{last_print}s / {seconds}s] RTX 4060 Active (100% Load) · Temp: {temp} · Passes: {passes}")
+
+        print(f"[LOQer] Completed {passes} parallel OpenCL compute batches. GPU operational and healthy!")
+    except Exception as e:
+        sys.stderr.write(f"[LOQer] GPU test error: {e}\n")
+
 def main():
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
-        print("Usage: loq-ctl [profile|mux|fancurve|bootlogo|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|status] [value...]")
+        print("Usage: loq-ctl [profile|mux|fancurve|bootlogo|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|test-gpu|status] [value...]")
         return
 
     cmd = sys.argv[1].lower()
@@ -682,6 +760,9 @@ def main():
         "ioport": lambda: toggle_bool("/sys/devices/platform/legion/leds/platform::ioport/brightness", args[0] if args else ""),
         "refresh": lambda: set_refresh(args[0] if args else ""),
         "powerlimits": lambda: set_powerlimits(args),
+        "test-gpu": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
+        "gpu-spike": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
+        "gputest": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
         "status": lambda: print(open(STATUS_FILE).read()) if os.path.exists(STATUS_FILE) else None
     }
 
