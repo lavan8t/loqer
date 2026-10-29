@@ -333,6 +333,15 @@ def main():
             ac_on = is_ac_online()
 
             if curr_profile != last_profile:
+                # Wait 100ms for Lenovo EC firmware / ACPI state evaluation to finish latching,
+                # absorbing transient 20-40ms intermediate hardware bounces.
+                time.sleep(0.1)
+                settled_profile = get_current_profile()
+                if settled_profile != curr_profile:
+                    curr_profile = settled_profile
+                    if curr_profile == last_profile:
+                        continue
+
                 print(f"[lenovo-power-daemon] Hardware state changed: {last_profile} -> {curr_profile} (AC={ac_on})", flush=True)
 
                 # Pure change detection: NEVER hijack or fight hardware EC hotkey switching
@@ -383,6 +392,15 @@ def main():
                 last_target_state = target_state
                 update_status_json(active_profile, target_state, ac_on)
                 last_json_write_time = time.monotonic()
+
+                # Flush all pending poll events from the settling period
+                if poll_fds:
+                    for fd in poll_fds:
+                        try:
+                            os.lseek(fd, 0, os.SEEK_SET)
+                            os.read(fd, 64)
+                        except Exception:
+                            pass
 
             elif (time.monotonic() - last_json_write_time) > 1.5:
                 enable_fnq_custom_hardware()

@@ -127,6 +127,10 @@ ApplicationWindow {
         battery_wh_design: 60.0
     })
 
+    // Power Profile switching settling lock
+    property bool profileSwitching: false
+    property string targetProfile: ""
+
     // GodMode Power Tuning temporary sliders
     property int sliderPl1: 55
     property int sliderPl2: 115
@@ -208,6 +212,16 @@ ApplicationWindow {
         id: powerFeedbackTimer
         interval: 2200
         onTriggered: root.powerLimitsFeedback = false
+    }
+
+    Timer {
+        id: profileSettleTimer
+        interval: 450
+        repeat: false
+        onTriggered: {
+            root.profileSwitching = false;
+            root.reloadStatus();
+        }
     }
 
     Timer {
@@ -294,10 +308,13 @@ ApplicationWindow {
                 if (parsed.profile === "low-power") {
                     parsed.profile = "quiet";
                 }
+                if (root.profileSwitching) {
+                    parsed.profile = root.targetProfile;
+                }
                 let oldProfile = root.statusData.profile;
                 root.statusData = parsed;
                 root.statusDataChanged();
-                if (oldProfile !== root.statusData.profile) {
+                if (!root.profileSwitching && oldProfile !== root.statusData.profile) {
                     bigLoqRing.triggerSpin();
                 }
                 if (!root.initializedLimits) {
@@ -315,7 +332,11 @@ ApplicationWindow {
         Quickshell.execDetached(["sudo", "-n", "/usr/local/bin/loq-ctl", action, String(val)]);
         let newStatus = Object.assign({}, root.statusData);
         if (action === "profile") {
-            newStatus.profile = (val === "low-power" ? "quiet" : val);
+            let canon = (val === "low-power" ? "quiet" : val);
+            root.targetProfile = canon;
+            root.profileSwitching = true;
+            profileSettleTimer.restart();
+            newStatus.profile = canon;
             bigLoqRing.triggerSpin();
         } else if (action === "mux") {
             newStatus.igpu_mode = parseInt(val);

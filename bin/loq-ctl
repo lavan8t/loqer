@@ -136,6 +136,20 @@ def set_profile(p):
 
     try:
         canonical = "custom" if prof_name == "custom" else ("performance" if prof_name == "performance" else ("quiet" if prof_name == "low-power" else "balanced"))
+        for sp in ["/run/lenovo-power-status.json", "/run/user/1000/lenovo-power-status.json"]:
+            if os.path.isfile(sp):
+                try:
+                    with open(sp, "r") as f:
+                        sdata = json.load(f)
+                    sdata["profile"] = canonical
+                    if canonical == "custom":
+                        sdata["fan_fullspeed"] = True
+                    elif canonical in ("quiet", "balanced", "performance"):
+                        sdata["fan_fullspeed"] = False
+                    with open(sp, "w") as f:
+                        json.dump(sdata, f, indent=2)
+                except Exception:
+                    pass
         subprocess.Popen(["/usr/local/bin/loq-generate-icon", canonical], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
