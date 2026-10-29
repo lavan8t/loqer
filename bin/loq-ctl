@@ -10,11 +10,25 @@ import glob
 import json
 import subprocess
 
-STATUS_FILE = "/run/user/1000/lenovo-power-status.json"
-LEGION_DIR = "/sys/devices/platform/legion"
+STATUS_FILE = os.environ.get("LOQ_STATUS_FILE") or (
+    "/run/user/1000/lenovo-power-status.json"
+    if os.path.exists("/run/user/1000/lenovo-power-status.json")
+    else "/run/lenovo-power-status.json"
+)
+LEGION_DIR = os.environ.get("LOQ_SYS_ROOT", "/sys/devices/platform/legion")
+
+def refresh_env_paths():
+    global STATUS_FILE, LEGION_DIR
+    LEGION_DIR = os.environ.get("LOQ_SYS_ROOT", "/sys/devices/platform/legion")
+    STATUS_FILE = os.environ.get("LOQ_STATUS_FILE") or (
+        "/run/user/1000/lenovo-power-status.json"
+        if os.path.exists("/run/user/1000/lenovo-power-status.json")
+        else "/run/lenovo-power-status.json"
+    )
 
 def check_loq_hardware():
-    if os.environ.get("LOQER_FORCE_DEVICE") == "1":
+    refresh_env_paths()
+    if os.environ.get("LOQER_FORCE_DEVICE") == "1" or os.environ.get("LOQ_SYS_ROOT"):
         return True
     vendor = ""
     try:
@@ -42,7 +56,7 @@ if not check_loq_hardware() and len(sys.argv) > 1 and sys.argv[1] not in ("-h", 
     sys.exit(1)
 
 # Auto-elevate to root via passwordless sudo if writing hardware registers
-if os.geteuid() != 0 and len(sys.argv) > 1:
+if os.geteuid() != 0 and len(sys.argv) > 1 and not os.environ.get("LOQ_SYS_ROOT") and not os.environ.get("LOQER_NO_SUDO"):
     cmd = sys.argv[1].lower()
     is_read_only = cmd in ("-h", "--help", "status", "fancurve", "test-gpu", "gpu-spike", "gputest") or (cmd == "bootlogo" and (len(sys.argv) <= 2 or sys.argv[2] in ("status", "get", "info", "--json", "-j")))
     if not is_read_only:
@@ -57,7 +71,10 @@ def write_node(path, val):
         with open(path, "w") as f:
             f.write(val_str + "\n")
         return True
-    except Exception:
+    except Exception as e:
+        if os.environ.get("LOQ_SYS_ROOT") or os.environ.get("LOQER_NO_SUDO"):
+            sys.stderr.write(f"Write failed for {path}: {e}\n")
+            return False
         try:
             cmd = f'echo "{val_str}" > "{path}"'
             subprocess.run(["sudo", "-n", "/usr/local/bin/loq-hw-write", cmd], check=True, capture_output=True)
@@ -67,9 +84,15 @@ def write_node(path, val):
             return False
 
 def find_legion_hwmon():
-    matches = glob.glob("/sys/devices/platform/legion/hwmon/hwmon*")
+    refresh_env_paths()
+    matches = glob.glob(os.path.join(LEGION_DIR, "hwmon/hwmon*"))
     if matches:
         return matches[0]
+    matches_flat = glob.glob(os.path.join(LEGION_DIR, "hwmon*"))
+    if matches_flat and os.path.isdir(matches_flat[0]):
+        return matches_flat[0]
+    if os.environ.get("LOQ_SYS_ROOT"):
+        return None
     for d in sorted(glob.glob("/sys/class/hwmon/hwmon*")):
         name_path = os.path.join(d, "name")
         if os.path.isfile(name_path):
@@ -82,6 +105,12 @@ def find_legion_hwmon():
     return None
 
 def get_legion_profile_path():
+    refresh_env_paths()
+    prof_in_legion = os.path.join(LEGION_DIR, "platform-profile")
+    if os.path.isfile(prof_in_legion):
+        return prof_in_legion
+    if os.environ.get("LOQ_SYS_ROOT"):
+        return None
     for p in glob.glob("/sys/class/platform-profile/platform-profile-*"):
         try:
             with open(os.path.join(p, "name")) as f:
@@ -92,8 +121,10 @@ def get_legion_profile_path():
     return None
 
 def set_gpu_tgp(ctgp_w, ppab_w):
-    write_node("/sys/devices/platform/legion/gpu_ctgp_powerlimit", ctgp_w)
-    write_node("/sys/devices/platform/legion/gpu_ppab_powerlimit", ppab_w)
+    refresh_env_paths()
+    ok1 = write_node(os.path.join(LEGION_DIR, "gpu_ctgp_powerlimit"), ctgp_w)
+    ok2 = write_node(os.path.join(LEGION_DIR, "gpu_ppab_powerlimit"), ppab_w)
+    return ok1 and ok2
 
 PROFILES = {
     "quiet": ("low-power", "1", "0", 45, 15),
@@ -113,64 +144,120 @@ PROFILES = {
 }
 
 def set_profile(p):
+    refresh_env_paths()
     p = p.lower().strip()
-    config = PROFILES.get(p, PROFILES["balanced"])
+    if p not in PROFILES:
+        sys.stderr.write(f"Error: Invalid profile '{p}'. Valid profiles: quiet, balanced, performance, custom\n")
+        return False
+    config = PROFILES[p]
     prof_name, powermode, fullspeed, ctgp, ppab = config
     
+    canonical = "custom" if prof_name == "custom" else ("performance" if prof_name == "performance" else ("quiet" if prof_name == "low-power" else "balanced"))
+
     # If explicitly switching profile away from custom, clear fullspeed override
     if prof_name != "custom":
-        if os.path.exists("/run/loq-prev-profile"):
+        prev_prof_file = os.path.join(os.environ.get("LOQ_RUN_DIR", "/run"), "loq-prev-profile")
+        if os.path.exists(prev_prof_file):
             try:
-                os.remove("/run/loq-prev-profile")
+                os.remove(prev_prof_file)
             except Exception:
                 pass
         write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
 
+    # Update thermal_mode if it exists
+    thermal_mode_path = os.path.join(LEGION_DIR, "thermal_mode")
+    if os.path.exists(thermal_mode_path):
+        write_node(thermal_mode_path, canonical)
+
     legion_p = get_legion_profile_path()
     if legion_p:
         write_node(legion_p, prof_name)
-    else:
-        write_node(os.path.join(LEGION_DIR, "powermode"), powermode)
+    powermode_path = os.path.join(LEGION_DIR, "powermode")
+    if os.path.exists(powermode_path) or not legion_p:
+        write_node(powermode_path, powermode)
         
     write_node(os.path.join(LEGION_DIR, "fan_fullspeed"), fullspeed)
     set_gpu_tgp(ctgp, ppab)
 
+    status_files = [STATUS_FILE] if os.environ.get("LOQ_STATUS_FILE") else [
+        STATUS_FILE,
+        "/run/lenovo-power-status.json",
+        "/run/user/1000/lenovo-power-status.json"
+    ]
+    for sp in status_files:
+        if sp and os.path.isfile(sp):
+            try:
+                with open(sp, "r") as f:
+                    sdata = json.load(f)
+                sdata["profile"] = canonical
+                if canonical == "custom":
+                    sdata["fan_fullspeed"] = True
+                elif canonical in ("quiet", "balanced", "performance"):
+                    sdata["fan_fullspeed"] = False
+                with open(sp, "w") as f:
+                    json.dump(sdata, f, indent=2)
+            except Exception:
+                pass
+
     try:
-        canonical = "custom" if prof_name == "custom" else ("performance" if prof_name == "performance" else ("quiet" if prof_name == "low-power" else "balanced"))
-        for sp in ["/run/lenovo-power-status.json", "/run/user/1000/lenovo-power-status.json"]:
-            if os.path.isfile(sp):
-                try:
-                    with open(sp, "r") as f:
-                        sdata = json.load(f)
-                    sdata["profile"] = canonical
-                    if canonical == "custom":
-                        sdata["fan_fullspeed"] = True
-                    elif canonical in ("quiet", "balanced", "performance"):
-                        sdata["fan_fullspeed"] = False
-                    with open(sp, "w") as f:
-                        json.dump(sdata, f, indent=2)
-                except Exception:
-                    pass
         subprocess.Popen(["/usr/local/bin/loq-generate-icon", canonical], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
+    return True
 
 def set_mux(m):
+    refresh_env_paths()
     m = m.lower().strip()
-    path = os.path.join(LEGION_DIR, "igpumode")
-    modes = {"dedicated": "0", "dgpu": "0", "0": "0", "igpu": "1", "intel": "1", "1": "1", "hybrid": "2", "auto": "2", "2": "2"}
-    if m in modes:
-        write_node(path, modes[m])
+    modes = {
+        "dedicated": "0", "dgpu": "0", "0": "0",
+        "igpu": "1", "intel": "1", "1": "1",
+        "hybrid": "2", "auto": "2", "2": "2"
+    }
+    if m not in modes:
+        sys.stderr.write(f"Error: Invalid MUX mode '{m}'. Valid modes: hybrid, igpu, dgpu\n")
+        return False
+
+    val = modes[m]
+    target_node = os.path.join(LEGION_DIR, "igpu_mode") if os.path.exists(os.path.join(LEGION_DIR, "igpu_mode")) else os.path.join(LEGION_DIR, "igpumode")
+    ok = write_node(target_node, val)
+    alt_node = os.path.join(LEGION_DIR, "igpumode") if target_node.endswith("igpu_mode") else os.path.join(LEGION_DIR, "igpu_mode")
+    if os.path.exists(alt_node):
+        write_node(alt_node, val)
+
+    status_files = [STATUS_FILE] if os.environ.get("LOQ_STATUS_FILE") else [
+        STATUS_FILE,
+        "/run/lenovo-power-status.json",
+        "/run/user/1000/lenovo-power-status.json"
+    ]
+    for sp in status_files:
+        if sp and os.path.isfile(sp):
+            try:
+                with open(sp, "r") as f:
+                    sdata = json.load(f)
+                sdata["igpu_mode"] = int(val)
+                with open(sp, "w") as f:
+                    json.dump(sdata, f, indent=2)
+            except Exception:
+                pass
+    return ok
 
 def set_ideapad_attribute(attr, val):
+    refresh_env_paths()
     val = str(val).strip().lower()
-    paths = [
-        f"/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/{attr}",
-        f"/sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/{attr}"
-    ] + glob.glob(f"/sys/bus/platform/drivers/ideapad_acpi/*/{attr}")
+    paths = []
+    if os.environ.get("LOQ_IDEAPAD_DIR"):
+        paths.append(os.path.join(os.environ["LOQ_IDEAPAD_DIR"], attr))
+    paths.append(os.path.join(LEGION_DIR, attr))
+    if not os.environ.get("LOQ_SYS_ROOT"):
+        paths.extend([
+            f"/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/{attr}",
+            f"/sys/devices/pci0000:00/0000:00:1f.0/PNP0C09:00/VPC2004:00/{attr}"
+        ])
+        paths.extend(glob.glob(f"/sys/bus/platform/drivers/ideapad_acpi/*/{attr}"))
 
     target_path = next((p for p in paths if os.path.exists(p)), None)
     if not target_path:
+        sys.stderr.write(f"Error: sysfs node for '{attr}' not found\n")
         return False
 
     cur = "0"
@@ -180,19 +267,83 @@ def set_ideapad_attribute(attr, val):
     except Exception:
         pass
 
-    new_val = ("0" if cur == "1" else "1") if val in ("toggle", "") else ("1" if val in ("1", "on", "true", "enable") else "0")
-    return write_node(target_path, new_val)
+    if val in ("status", "get", "read"):
+        print(cur)
+        return True
+
+    if val in ("toggle", ""):
+        new_val = "0" if cur == "1" else "1"
+    elif val in ("1", "on", "true", "enable"):
+        new_val = "1"
+    elif val in ("0", "off", "false", "disable"):
+        new_val = "0"
+    else:
+        sys.stderr.write(f"Error: Invalid value '{val}' for {attr}. Use 1/0, on/off, or toggle.\n")
+        return False
+
+    ok = write_node(target_path, new_val)
+    if ok:
+        status_files = [STATUS_FILE] if os.environ.get("LOQ_STATUS_FILE") else [
+            STATUS_FILE,
+            "/run/lenovo-power-status.json",
+            "/run/user/1000/lenovo-power-status.json"
+        ]
+        for sp in status_files:
+            if sp and os.path.isfile(sp):
+                try:
+                    with open(sp, "r") as f:
+                        sdata = json.load(f)
+                    sdata[attr] = (new_val == "1")
+                    with open(sp, "w") as f:
+                        json.dump(sdata, f, indent=2)
+                except Exception:
+                    pass
+    return ok
 
 def toggle_bool(sysfs_path, state_str=None):
+    refresh_env_paths()
     if not os.path.exists(sysfs_path):
-        return
+        sys.stderr.write(f"Error: Node '{sysfs_path}' not found\n")
+        return False
     cur = ""
     try:
-        with open(sysfs_path) as f: cur = f.read().strip()
-    except Exception: pass
+        with open(sysfs_path) as f:
+            cur = f.read().strip()
+    except Exception:
+        pass
 
-    new_val = ("0" if cur == "1" else "1") if (state_str is None or state_str in ("toggle", "")) else ("1" if state_str in ("1", "on", "true") else "0")
-    write_node(sysfs_path, new_val)
+    if state_str is None or state_str == "" or state_str == "toggle":
+        new_val = "0" if cur == "1" else "1"
+    elif state_str in ("status", "get", "read"):
+        print(cur)
+        return True
+    elif state_str in ("1", "on", "true", "enable"):
+        new_val = "1"
+    elif state_str in ("0", "off", "false", "disable"):
+        new_val = "0"
+    else:
+        sys.stderr.write(f"Error: Invalid state '{state_str}'. Use 1/0, on/off, or toggle.\n")
+        return False
+
+    ok = write_node(sysfs_path, new_val)
+    if ok:
+        attr_name = os.path.basename(sysfs_path)
+        status_files = [STATUS_FILE] if os.environ.get("LOQ_STATUS_FILE") else [
+            STATUS_FILE,
+            "/run/lenovo-power-status.json",
+            "/run/user/1000/lenovo-power-status.json"
+        ]
+        for sp in status_files:
+            if sp and os.path.isfile(sp):
+                try:
+                    with open(sp, "r") as f:
+                        sdata = json.load(f)
+                    sdata[attr_name] = (new_val == "1")
+                    with open(sp, "w") as f:
+                        json.dump(sdata, f, indent=2)
+                except Exception:
+                    pass
+    return ok
 
 CURVE_PRESETS = {
     "quiet": [{"step": s, "temp": 50 + s*5, "pwm1": max(0, (s-1)*11), "pwm2": max(0, (s-1)*11)} for s in range(1, 11)],
@@ -224,6 +375,7 @@ CURVE_PRESETS = {
 }
 
 def set_fan_fullspeed(val=None):
+    refresh_env_paths()
     cur = "0"
     try:
         with open(os.path.join(LEGION_DIR, "fan_fullspeed")) as f:
@@ -231,8 +383,13 @@ def set_fan_fullspeed(val=None):
     except Exception:
         pass
 
+    if val in ("status", "get", "read"):
+        print(cur)
+        return True
+
     enable = (cur != "1") if (val is None or val in ("toggle", "")) else (str(val).lower() in ("1", "on", "true", "enable"))
 
+    prev_prof_file = os.path.join(os.environ.get("LOQ_RUN_DIR", "/run"), "loq-prev-profile")
     if enable:
         cur_prof = "balanced"
         legion_p = get_legion_profile_path()
@@ -242,9 +399,9 @@ def set_fan_fullspeed(val=None):
             except Exception:
                 pass
         
-        if cur_prof != "custom" and not os.path.exists("/run/loq-prev-profile"):
+        if cur_prof != "custom" and not os.path.exists(prev_prof_file):
             try:
-                with open("/run/loq-prev-profile", "w") as f:
+                with open(prev_prof_file, "w") as f:
                     f.write(cur_prof)
             except Exception:
                 pass
@@ -259,11 +416,11 @@ def set_fan_fullspeed(val=None):
         write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
         
         prev_prof = None
-        if os.path.exists("/run/loq-prev-profile"):
+        if os.path.exists(prev_prof_file):
             try:
-                with open("/run/loq-prev-profile") as f:
+                with open(prev_prof_file) as f:
                     prev_prof = f.read().strip()
-                os.remove("/run/loq-prev-profile")
+                os.remove(prev_prof_file)
             except Exception:
                 pass
         
@@ -272,10 +429,57 @@ def set_fan_fullspeed(val=None):
             print(f"Emergency fan fullspeed disabled; restored profile: {prev_prof}")
         else:
             print("Emergency fan fullspeed disabled; unlocked fan controller.")
+    return True
+
+def validate_fan_curve(points):
+    """
+    Validates a 10-point fan curve.
+    Requirements:
+    - Exactly 10 points (steps 1 through 10)
+    - Monotonically increasing or non-decreasing temperature
+    - PWM bounds (pwm1 and pwm2 in 0..100)
+    """
+    if not isinstance(points, list):
+        return False, f"Fan curve must be a list of points (got {type(points).__name__})"
+    if len(points) != 10:
+        return False, f"Fan curve must contain exactly 10 points (got {len(points)})"
+
+    prev_temp = -1
+    for i, pt in enumerate(points):
+        if not isinstance(pt, dict):
+            return False, f"Point {i+1} is not a dictionary"
+        for key in ("step", "temp", "pwm1", "pwm2"):
+            if key not in pt:
+                return False, f"Point {i+1} missing required field '{key}'"
+            if isinstance(pt[key], bool) or not isinstance(pt[key], (int, float)):
+                return False, f"Point {i+1} field '{key}' must be numeric"
+
+        step = int(pt["step"])
+        if step != i + 1:
+            return False, f"Point {i+1} step index mismatch: {step} != {i+1}"
+
+        temp = int(pt["temp"])
+        if not (0 <= temp <= 120):
+            return False, f"Point {step} temp {temp}°C out of valid range (0-120°C)"
+
+        if temp < prev_temp:
+            return False, f"Temperature monotonicity violation at step {step}: {temp}°C < {prev_temp}°C"
+        prev_temp = temp
+
+        pwm1 = int(pt["pwm1"])
+        pwm2 = int(pt["pwm2"])
+        if not (0 <= pwm1 <= 100):
+            return False, f"Point {step} PWM1 {pwm1}% out of bounds (0-100%)"
+        if not (0 <= pwm2 <= 100):
+            return False, f"Point {step} PWM2 {pwm2}% out of bounds (0-100%)"
+
+    return True, ""
 
 def apply_fan_points(points):
+    refresh_env_paths()
     hwmon = find_legion_hwmon()
     if not hwmon:
+        sys.stderr.write("Error: legion hwmon sysfs node not found\n")
         return False
     write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "1")
 
@@ -291,29 +495,48 @@ def apply_fan_points(points):
             if os.path.exists(t_path): write_node(t_path, temp)
             if os.path.exists(p_path): write_node(p_path, raw)
 
+    fancurve_node = os.path.join(LEGION_DIR, "fancurve")
+    if os.path.exists(fancurve_node):
+        try:
+            write_node(fancurve_node, json.dumps(points))
+        except Exception:
+            pass
+
     return True
 
 def handle_fancurve(args):
+    refresh_env_paths()
     if not args:
-        print("Usage: loq-ctl fancurve [preset <name>|get|set <step> <temp> <pwm1> <pwm2>|auto]")
-        return
+        print("Usage: loq-ctl fancurve [preset <name>|apply <json|file>|get|set <step> <temp> <pwm1> <pwm2>|auto]")
+        return False
     sub = args[0].lower()
-    if sub == "preset" and len(args) > 1:
+    if sub == "preset":
+        if len(args) < 2:
+            sys.stderr.write("Usage: loq-ctl fancurve preset <quiet|balanced|performance|max|auto>\n")
+            return False
         preset_name = args[1].lower()
         if preset_name in CURVE_PRESETS:
-            apply_fan_points(CURVE_PRESETS[preset_name])
-            print(f"Applied fan preset: {preset_name}")
+            ok = apply_fan_points(CURVE_PRESETS[preset_name])
+            if ok:
+                print(f"Applied fan preset: {preset_name}")
+            return ok
         elif preset_name in ("auto", "default", "rom"):
             write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
             print("Reset to EC Auto fan control (unlocked).")
+            return True
+        else:
+            sys.stderr.write(f"Error: Unknown fan curve preset '{preset_name}'. Valid presets: quiet, balanced, performance, max, auto\n")
+            return False
     elif sub in ("auto", "reset"):
         write_node(os.path.join(LEGION_DIR, "lockfancontroller"), "0")
         print("Reset to EC Auto fan control (unlocked).")
+        return True
     elif sub == "get":
         hwmon = find_legion_hwmon()
         if not hwmon:
+            sys.stderr.write("Error: legion hwmon sysfs node not found\n")
             print("[]")
-            return
+            return False
         points = []
         for step in range(1, 11):
             t_path = os.path.join(hwmon, f"pwm1_auto_point{step}_temp")
@@ -322,36 +545,244 @@ def handle_fancurve(args):
             temp = int(open(t_path).read().strip()) if os.path.exists(t_path) else 0
             p1_raw = int(open(p1_path).read().strip()) if os.path.exists(p1_path) else 0
             p2_raw = int(open(p2_path).read().strip()) if os.path.exists(p2_path) else 0
-            points.append({"step": step, "temp": temp, "pwm1": min(100, int(round(p1_raw / 1.27))), "pwm2": min(100, int(round(p2_raw / 1.27)))})
+            points.append({
+                "step": step,
+                "temp": temp,
+                "pwm1": min(100, int(round(p1_raw / 1.27))),
+                "pwm2": min(100, int(round(p2_raw / 1.27)))
+            })
         print(json.dumps(points))
-    elif sub == "set" and len(args) >= 5:
-        apply_fan_points([{"step": int(args[1]), "temp": int(args[2]), "pwm1": int(args[3]), "pwm2": int(args[4])}])
-        print(f"Set fan point {args[1]}: {args[2]}°C, CPU {args[3]}%, GPU {args[4]}%")
+        return True
+    elif sub in ("apply", "curve", "set-curve"):
+        if len(args) < 2:
+            sys.stderr.write("Usage: loq-ctl fancurve apply <json_string_or_filepath>\n")
+            return False
+        raw_input = args[1]
+        data = None
+        if os.path.isfile(raw_input):
+            try:
+                with open(raw_input, "r") as f:
+                    data = json.load(f)
+            except Exception as e:
+                sys.stderr.write(f"Error reading fan curve file '{raw_input}': {e}\n")
+                return False
+        else:
+            try:
+                data = json.loads(raw_input)
+            except Exception as e:
+                sys.stderr.write(f"Error: Malformed fan curve JSON syntax: {e}\n")
+                return False
+
+        valid, err = validate_fan_curve(data)
+        if not valid:
+            sys.stderr.write(f"Error: Invalid fan curve: {err}\n")
+            return False
+
+        ok = apply_fan_points(data)
+        if ok:
+            print("Fan curve applied successfully.")
+        return ok
+    elif sub == "validate":
+        if len(args) < 2:
+            sys.stderr.write("Usage: loq-ctl fancurve validate <json_string_or_filepath>\n")
+            return False
+        raw_input = args[1]
+        data = None
+        if os.path.isfile(raw_input):
+            try:
+                with open(raw_input, "r") as f:
+                    data = json.load(f)
+            except Exception as e:
+                sys.stderr.write(f"Error reading fan curve file: {e}\n")
+                return False
+        else:
+            try:
+                data = json.loads(raw_input)
+            except Exception as e:
+                sys.stderr.write(f"Error: Malformed fan curve JSON syntax: {e}\n")
+                return False
+        valid, err = validate_fan_curve(data)
+        if not valid:
+            sys.stderr.write(f"Error: Invalid fan curve: {err}\n")
+            return False
+        print("Fan curve is valid.")
+        return True
+    elif sub == "set":
+        if len(args) < 5:
+            sys.stderr.write("Usage: loq-ctl fancurve set <step 1-10> <temp 0-120> <pwm1 0-100> <pwm2 0-100>\n")
+            return False
+        try:
+            step = int(args[1])
+            temp = int(args[2])
+            pwm1 = int(args[3])
+            pwm2 = int(args[4])
+        except ValueError:
+            sys.stderr.write("Error: Fan point parameters must be integers\n")
+            return False
+
+        if not (1 <= step <= 10):
+            sys.stderr.write(f"Error: Step {step} out of bounds (1-10)\n")
+            return False
+        if not (0 <= temp <= 120):
+            sys.stderr.write(f"Error: Temp {temp}°C out of bounds (0-120°C)\n")
+            return False
+        if not (0 <= pwm1 <= 100):
+            sys.stderr.write(f"Error: PWM1 {pwm1}% out of bounds (0-100%)\n")
+            return False
+        if not (0 <= pwm2 <= 100):
+            sys.stderr.write(f"Error: PWM2 {pwm2}% out of bounds (0-100%)\n")
+            return False
+
+        ok = apply_fan_points([{"step": step, "temp": temp, "pwm1": pwm1, "pwm2": pwm2}])
+        if ok:
+            print(f"Set fan point {step}: {temp}°C, CPU {pwm1}%, GPU {pwm2}%")
+        return ok
+    else:
+        sys.stderr.write(f"Error: Unknown fancurve subcommand '{sub}'\n")
+        return False
 
 def set_kbd(val):
+    refresh_env_paths()
     val = str(val).strip().lower()
-    path = "/sys/devices/platform/legion/leds/platform::kbd_backlight_1/brightness"
+    path = os.path.join(LEGION_DIR, "leds/platform::kbd_backlight_1/brightness")
+    if not os.path.exists(path):
+        path = "/sys/devices/platform/legion/leds/platform::kbd_backlight_1/brightness"
+    if not os.path.exists(path):
+        sys.stderr.write("Error: Keyboard backlight node not found\n")
+        return False
     levels = {"0": "0", "off": "0", "1": "1", "low": "1", "2": "2", "high": "2"}
     if val in levels:
-        write_node(path, levels[val])
-    else:
+        return write_node(path, levels[val])
+    elif val in ("status", "get", "read"):
+        try:
+            print(open(path).read().strip())
+            return True
+        except Exception:
+            return False
+    elif val in ("", "toggle", "next"):
         try: cur = int(open(path).read().strip())
         except Exception: cur = 0
-        write_node(path, str((cur + 1) % 3))
+        return write_node(path, str((cur + 1) % 3))
+    else:
+        sys.stderr.write(f"Error: Invalid keyboard backlight level '{val}'. Use 0/1/2 or off/low/high.\n")
+        return False
 
 def set_refresh(val):
     rate = "60" if str(val).strip().lower() in ("60", "save", "low") else "144"
     subprocess.run(["/home/lavan/.local/bin/set-panel-refresh", rate], check=False)
+    return True
 
 def set_powerlimits(args):
+    refresh_env_paths()
     if not args:
-        return
-    pl1 = args[0]
-    pl2 = args[1] if len(args) > 1 else str(int(pl1) * 2)
-    write_node("/sys/devices/platform/legion/cpu_longterm_powerlimit", pl1)
-    write_node("/sys/devices/platform/legion/cpu_shortterm_powerlimit", pl2)
-    if len(args) > 2: write_node("/sys/devices/platform/legion/gpu_ctgp_powerlimit", args[2])
-    if len(args) > 3: write_node("/sys/devices/platform/legion/gpu_ppab_powerlimit", args[3])
+        sys.stderr.write("Usage: loq-ctl powerlimits <pl1_w> [pl2_w] [ctgp_w] [ppab_w]\n")
+        return False
+    try:
+        pl1 = int(args[0])
+    except ValueError:
+        sys.stderr.write(f"Error: Invalid PL1 power limit '{args[0]}'. Must be an integer.\n")
+        return False
+
+    if not (15 <= pl1 <= 115):
+        sys.stderr.write(f"Error: PL1 power limit {pl1}W out of range (15-115W)\n")
+        return False
+
+    if len(args) > 1:
+        try:
+            pl2 = int(args[1])
+        except ValueError:
+            sys.stderr.write(f"Error: Invalid PL2 power limit '{args[1]}'. Must be an integer.\n")
+            return False
+    else:
+        pl2 = min(135, max(25, pl1 * 2))
+
+    if not (25 <= pl2 <= 135):
+        sys.stderr.write(f"Error: PL2 power limit {pl2}W out of range (25-135W)\n")
+        return False
+
+    if pl2 < pl1:
+        sys.stderr.write(f"Error: PL2 ({pl2}W) cannot be less than PL1 ({pl1}W)\n")
+        return False
+
+    ctgp = None
+    if len(args) > 2:
+        try:
+            ctgp = int(args[2])
+        except ValueError:
+            sys.stderr.write(f"Error: Invalid cTGP power limit '{args[2]}'. Must be an integer.\n")
+            return False
+        if not (45 <= ctgp <= 105):
+            sys.stderr.write(f"Error: GPU cTGP limit {ctgp}W out of range (45-105W)\n")
+            return False
+
+    ppab = None
+    if len(args) > 3:
+        try:
+            ppab = int(args[3])
+        except ValueError:
+            sys.stderr.write(f"Error: Invalid PPAB power limit '{args[3]}'. Must be an integer.\n")
+            return False
+        if not (5 <= ppab <= 25):
+            sys.stderr.write(f"Error: GPU PPAB limit {ppab}W out of range (5-25W)\n")
+            return False
+
+    pl1_node = os.path.join(LEGION_DIR, "cpu_longterm_powerlimit")
+    pl2_node = os.path.join(LEGION_DIR, "cpu_shortterm_powerlimit")
+    if not (os.path.exists(pl1_node) and os.path.exists(pl2_node)):
+        sys.stderr.write("Error: CPU power limit sysfs nodes not found\n")
+        return False
+
+    ok1 = write_node(pl1_node, pl1)
+    ok2 = write_node(pl2_node, pl2)
+    if not (ok1 and ok2):
+        return False
+
+    if ctgp is not None:
+        ctgp_node = os.path.join(LEGION_DIR, "gpu_ctgp_powerlimit")
+        if not os.path.exists(ctgp_node):
+            sys.stderr.write("Error: GPU cTGP sysfs node not found\n")
+            return False
+        if not write_node(ctgp_node, ctgp):
+            return False
+
+    if ppab is not None:
+        ppab_node = os.path.join(LEGION_DIR, "gpu_ppab_powerlimit")
+        if not os.path.exists(ppab_node):
+            sys.stderr.write("Error: GPU PPAB sysfs node not found\n")
+            return False
+        if not write_node(ppab_node, ppab):
+            return False
+
+    pl_combined_node = os.path.join(LEGION_DIR, "power_limits")
+    if os.path.exists(pl_combined_node):
+        ctgp_str = str(ctgp) if ctgp is not None else "105"
+        ppab_str = str(ppab) if ppab is not None else "25"
+        write_node(pl_combined_node, f"{pl1} {pl2} {ctgp_str} {ppab_str}")
+
+    status_files = [STATUS_FILE] if os.environ.get("LOQ_STATUS_FILE") else [
+        STATUS_FILE,
+        "/run/lenovo-power-status.json",
+        "/run/user/1000/lenovo-power-status.json"
+    ]
+    for sp in status_files:
+        if sp and os.path.isfile(sp):
+            try:
+                with open(sp, "r") as f:
+                    sdata = json.load(f)
+                sdata["pl1_w"] = pl1
+                sdata["pl2_w"] = pl2
+                if ctgp is not None:
+                    sdata["gpu_ctgp_w"] = ctgp
+                if ppab is not None:
+                    sdata["gpu_ppab_w"] = ppab
+                if "gpu_ctgp_w" in sdata and "gpu_ppab_w" in sdata:
+                    sdata["gpu_total_w"] = sdata["gpu_ctgp_w"] + sdata["gpu_ppab_w"]
+                with open(sp, "w") as f:
+                    json.dump(sdata, f, indent=2)
+            except Exception:
+                pass
+
+    return True
 
 LBLDESP_PATH = "/sys/firmware/efi/efivars/LBLDESP-871455d0-5576-4fb8-9865-af0824463b9e"
 LBLDVC_PATH = "/sys/firmware/efi/efivars/LBLDVC-871455d1-5576-4fb8-9865-af0824463c9f"
@@ -732,10 +1163,34 @@ def run_gpu_spike(seconds=4):
     except Exception as e:
         sys.stderr.write(f"[LOQer] GPU test error: {e}\n")
 
+def print_status():
+    refresh_env_paths()
+    if os.environ.get("LOQ_STATUS_FILE"):
+        status_path = os.environ["LOQ_STATUS_FILE"]
+    else:
+        status_path = STATUS_FILE
+        if not os.path.isfile(status_path):
+            for fallback in ("/run/user/1000/lenovo-power-status.json", "/run/lenovo-power-status.json"):
+                if os.path.isfile(fallback):
+                    status_path = fallback
+                    break
+    if not os.path.isfile(status_path):
+        sys.stderr.write(f"Error: Status file '{status_path}' not found\n")
+        return False
+    try:
+        with open(status_path, "r") as f:
+            content = f.read()
+        print(content.strip())
+        return True
+    except Exception as e:
+        sys.stderr.write(f"Error reading status file '{status_path}': {e}\n")
+        return False
+
 def main():
+    refresh_env_paths()
     if len(sys.argv) < 2 or sys.argv[1] in ("-h", "--help"):
         print("Usage: loq-ctl [profile|mux|fancurve|bootlogo|conservation|fn_lock|fan_fullspeed|touchpad|winkey|overdrive|kbd|ioport|refresh|powerlimits|test-gpu|status] [value...]")
-        return
+        return 0
 
     cmd = sys.argv[1].lower()
     args = sys.argv[2:]
@@ -757,17 +1212,22 @@ def main():
         "winkey": lambda: toggle_bool(os.path.join(LEGION_DIR, "winkey"), args[0] if args else ""),
         "overdrive": lambda: toggle_bool(os.path.join(LEGION_DIR, "overdrive"), args[0] if args else ""),
         "kbd": lambda: set_kbd(args[0] if args else ""),
-        "ioport": lambda: toggle_bool("/sys/devices/platform/legion/leds/platform::ioport/brightness", args[0] if args else ""),
+        "ioport": lambda: toggle_bool(os.path.join(LEGION_DIR, "leds/platform::ioport/brightness") if os.path.exists(os.path.join(LEGION_DIR, "leds/platform::ioport/brightness")) else "/sys/devices/platform/legion/leds/platform::ioport/brightness", args[0] if args else ""),
         "refresh": lambda: set_refresh(args[0] if args else ""),
         "powerlimits": lambda: set_powerlimits(args),
         "test-gpu": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
         "gpu-spike": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
         "gputest": lambda: run_gpu_spike(int(args[0]) if args and args[0].isdigit() else 4),
-        "status": lambda: print(open(STATUS_FILE).read()) if os.path.exists(STATUS_FILE) else None
+        "status": lambda: print_status()
     }
 
     if cmd in dispatch:
-        dispatch[cmd]()
+        res = dispatch[cmd]()
+        if res is False:
+            sys.exit(1)
+    else:
+        sys.stderr.write(f"Error: Unknown command '{cmd}'\n")
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
