@@ -40,6 +40,9 @@ install -m 644 "$SCRIPT_DIR/ui/loqControl.qml" "$USER_HOME/.config/quickshell/ii
 if [ -f "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" ]; then
     install -m 644 "$SCRIPT_DIR/ui/fonts/GoogleSansFlex.ttf" "$USER_HOME/.config/quickshell/ii/fonts/GoogleSansFlex.ttf"
 fi
+if [ -d "$USER_HOME/.config/quickshell/ii/modules/ii/bar" ] && [ -f "$SCRIPT_DIR/assets/quickshell/LoqRingIcon.qml" ]; then
+    install -m 644 "$SCRIPT_DIR/assets/quickshell/LoqRingIcon.qml" "$USER_HOME/.config/quickshell/ii/modules/ii/bar/LoqRingIcon.qml"
+fi
 
 # System font registration
 mkdir -p /usr/local/share/fonts/loqer
