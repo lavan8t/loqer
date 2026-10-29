@@ -21,6 +21,10 @@ Flow {
         },
     ]
     property var currentValue: null
+    property var activeValue: currentValue
+    onCurrentValueChanged: {
+        activeValue = currentValue;
+    }
 
     signal selected(var newValue)
 
@@ -44,8 +48,15 @@ Flow {
             rightmost: index === root.options.length - 1
             buttonIcon: modelData.icon || ""
             buttonText: modelData.displayName
-            toggled: root.currentValue == modelData.value
+            toggled: {
+                let v = root.activeValue;
+                if ((v === "low-power" || v === "quiet") && (modelData.value === "quiet" || modelData.value === "low-power")) {
+                    return true;
+                }
+                return v == modelData.value;
+            }
             onClicked: {
+                root.activeValue = modelData.value;
                 root.selected(modelData.value);
             }
         }

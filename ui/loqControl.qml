@@ -260,8 +260,12 @@ ApplicationWindow {
             statusFile.reload();
             const txt = statusFile.text().trim();
             if (txt && txt.startsWith("{")) {
+                let parsed = JSON.parse(txt);
+                if (parsed.profile === "low-power") {
+                    parsed.profile = "quiet";
+                }
                 let oldProfile = root.statusData.profile;
-                root.statusData = JSON.parse(txt);
+                root.statusData = parsed;
                 root.statusDataChanged();
                 if (oldProfile !== root.statusData.profile) {
                     bigLoqRing.triggerSpin();
@@ -281,7 +285,7 @@ ApplicationWindow {
         Quickshell.execDetached(["sudo", "-n", "/usr/local/bin/loq-ctl", action, String(val)]);
         let newStatus = Object.assign({}, root.statusData);
         if (action === "profile") {
-            newStatus.profile = val;
+            newStatus.profile = (val === "low-power" ? "quiet" : val);
             bigLoqRing.triggerSpin();
         } else if (action === "mux") {
             newStatus.igpu_mode = parseInt(val);
@@ -487,17 +491,28 @@ ApplicationWindow {
                                 Component.onCompleted: requestPaint()
                             }
 
-                            RotationAnimation on rotation {
+                            NumberAnimation {
                                 id: bigSpinAnim
+                                target: bigLoqRing
+                                property: "rotation"
+                                from: 0
+                                to: 360
                                 duration: 550
                                 easing.type: Easing.OutBack
                                 easing.overshoot: 1.15
-                                alwaysRunToEnd: true
+                                onFinished: {
+                                    bigLoqRing.rotation = 0;
+                                }
+                                onStopped: {
+                                    bigLoqRing.rotation = 0;
+                                }
                             }
 
                             function triggerSpin() {
-                                bigSpinAnim.from = bigLoqRing.rotation;
-                                bigSpinAnim.to = bigLoqRing.rotation + 360;
+                                if (bigSpinAnim.running) {
+                                    return;
+                                }
+                                bigLoqRing.rotation = 0;
                                 bigSpinAnim.restart();
                             }
 

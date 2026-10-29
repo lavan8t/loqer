@@ -209,8 +209,10 @@ def update_status_json(profile, target_state, ac_on):
     bat_cycles = int(raw_bat_cycles) if raw_bat_cycles.isdigit() else 0
     bat_health = round((bat_full / bat_design * 100), 1) if bat_design > 0 else 100.0
 
+    canonical_profile = "quiet" if profile in ("low-power", "quiet") else profile
+
     data = {
-        "profile": profile,
+        "profile": canonical_profile,
         "is_saver": is_saver,
         "ac_online": ac_on,
         "pl1_w": pl1,
