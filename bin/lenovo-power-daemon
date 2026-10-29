@@ -7,7 +7,7 @@ Production Lenovo LOQ / Legion Power & Profile Daemon
 - Never locks fan controller mutex (lockfancontroller=0) for silky-smooth EC thermal operation.
 - Never performs redundant display modesetting when cycling profiles on AC power.
 - Zero bus contention: allows Lenovo EC firmware to natively manage hardware curves.
-- Fully atomic sysfs writes.
+- Fully atomic sysfs writes and atomic status JSON persistence.
 """
 
 import os
@@ -16,20 +16,51 @@ import glob
 import json
 import time
 import select
+import subprocess
 
-POWERMODE_PATH = "/sys/devices/platform/legion/powermode"
-FULLSPEED_PATH = "/sys/devices/platform/legion/fan_fullspeed"
-LOCKFAN_PATH = "/sys/devices/platform/legion/lockfancontroller"
+def get_sys_root():
+    return os.environ.get("LOQ_SYS_ROOT", "/sys/devices/platform/legion")
+
+def get_run_dir():
+    return os.environ.get("LOQ_RUN_DIR", "/run")
+
+def get_sys_dir():
+    if "LOQ_SYS_DIR" in os.environ:
+        return os.environ["LOQ_SYS_DIR"]
+    sys_root = get_sys_root()
+    norm = os.path.abspath(sys_root)
+    # If sys_root is inside a mock tree like /tmp/.../sys/devices/platform/legion
+    candidate = os.path.abspath(os.path.join(norm, "..", "..", ".."))
+    if os.path.exists(candidate) and (
+        os.path.exists(os.path.join(candidate, "class")) or
+        os.path.exists(os.path.join(candidate, "devices"))
+    ):
+        return candidate
+    return "/sys"
+
+POWERMODE_PATH = os.path.join(get_sys_root(), "powermode")
+FULLSPEED_PATH = os.path.join(get_sys_root(), "fan_fullspeed")
+LOCKFAN_PATH = os.path.join(get_sys_root(), "lockfancontroller")
 PLATFORM_PROFILE_PATH = "/sys/firmware/acpi/platform_profile"
 NO_TURBO_PATH = "/sys/devices/system/cpu/intel_pstate/no_turbo"
 GPU_RUNTIME_PATH = "/sys/bus/pci/devices/0000:01:00.0/power/runtime_status"
 REFRESH_SCRIPT = "/usr/local/bin/set-panel-refresh"
-MANUAL_OVERRIDE_FILE = "/run/loq-profile-override"
+MANUAL_OVERRIDE_FILE = os.path.join(get_run_dir(), "loq-profile-override")
 
 STATUS_FILES = [
     "/run/lenovo-power-status.json",
     "/run/user/1000/lenovo-power-status.json"
 ]
+
+def refresh_env_paths():
+    global POWERMODE_PATH, FULLSPEED_PATH, LOCKFAN_PATH, MANUAL_OVERRIDE_FILE, STATUS_FILES
+    sys_root = get_sys_root()
+    run_dir = get_run_dir()
+    POWERMODE_PATH = os.path.join(sys_root, "powermode")
+    FULLSPEED_PATH = os.path.join(sys_root, "fan_fullspeed")
+    LOCKFAN_PATH = os.path.join(sys_root, "lockfancontroller")
+    MANUAL_OVERRIDE_FILE = os.path.join(run_dir, "loq-profile-override")
+    STATUS_FILES = get_status_files()
 
 def read_file(path, default=""):
     try:
@@ -46,18 +77,95 @@ def write_file(path, content):
     except Exception:
         return False
 
+def write_atomic_json(filepath, data):
+    """
+    Atomically write JSON data to filepath using a temporary file in the same directory,
+    flushing, syncing to disk, and replacing with os.replace.
+    Guarantees Quickshell and UI never encounter partial or torn JSON reads.
+    """
+    tmp_file = None
+    try:
+        dirname = os.path.dirname(os.path.abspath(filepath))
+        if dirname:
+            os.makedirs(dirname, exist_ok=True)
+        tmp_file = f"{filepath}.tmp.{os.getpid()}"
+        with open(tmp_file, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        try:
+            os.chmod(tmp_file, 0o644)
+        except Exception:
+            pass
+        os.replace(tmp_file, filepath)
+        return True
+    except Exception as e:
+        sys.stderr.write(f"[lenovo-power-daemon] write_atomic_json error for {filepath}: {e}\n")
+        if tmp_file and os.path.exists(tmp_file):
+            try:
+                os.remove(tmp_file)
+            except Exception:
+                pass
+        return False
+
+def get_status_files():
+    """Resolve the list of status JSON target paths respecting environment overrides and user session."""
+    run_dir = get_run_dir()
+    uid = os.environ.get("SUDO_UID") or str(os.getuid() if os.getuid() != 0 else 1000)
+
+    files = []
+    env_status = os.environ.get("LOQ_STATUS_FILE")
+    if env_status and env_status not in files:
+        files.append(env_status)
+
+    system_file = os.path.join(run_dir, "lenovo-power-status.json")
+    user_file = os.path.join(run_dir, "user", str(uid), "lenovo-power-status.json")
+
+    if system_file not in files:
+        files.append(system_file)
+    if user_file not in files:
+        files.append(user_file)
+
+    if str(uid) != "1000":
+        user_1000 = os.path.join(run_dir, "user", "1000", "lenovo-power-status.json")
+        if user_1000 not in files:
+            files.append(user_1000)
+
+    return files
+
 def is_ac_online():
-    for f in glob.glob("/sys/class/power_supply/*/online"):
+    sys_dir = get_sys_dir()
+    paths = glob.glob(os.path.join(sys_dir, "class", "power_supply", "*", "online"))
+    if not paths and not os.environ.get("LOQ_SYS_ROOT"):
+        paths = glob.glob("/sys/class/power_supply/*/online")
+    for f in paths:
         dev_dir = os.path.dirname(f)
         type_file = os.path.join(dev_dir, "type")
-        if read_file(type_file, "") != "Battery":
+        if read_file(type_file, "").strip().lower() != "battery":
             if read_file(f, "0") == "1":
                 return True
     return False
 
+def find_battery_path():
+    sys_dir = get_sys_dir()
+    for bat_name in ("BAT1", "BAT0"):
+        p = os.path.join(sys_dir, "class", "power_supply", bat_name)
+        if os.path.isdir(p):
+            return p
+    for p in sorted(glob.glob(os.path.join(sys_dir, "class", "power_supply", "BAT*"))):
+        if os.path.isdir(p):
+            return p
+    for p in sorted(glob.glob(os.path.join(sys_dir, "class", "power_supply", "*"))):
+        type_file = os.path.join(p, "type")
+        if read_file(type_file, "").strip().lower() == "battery":
+            return p
+    return None
+
 def get_current_profile():
-    if os.path.isfile(POWERMODE_PATH):
-        val = read_file(POWERMODE_PATH, "")
+    sys_root = get_sys_root()
+    powermode_path = os.path.join(sys_root, "powermode")
+    if os.path.isfile(powermode_path):
+        val = read_file(powermode_path, "")
         if val in ("255", "custom"):
             return "custom"
         elif val == "3":
@@ -67,17 +175,30 @@ def get_current_profile():
         elif val == "2":
             return "balanced"
 
-    for p in sorted(glob.glob("/sys/class/platform-profile/platform-profile-*/profile")):
+    thermal_mode_path = os.path.join(sys_root, "thermal_mode")
+    if os.path.isfile(thermal_mode_path):
+        val = read_file(thermal_mode_path, "").lower()
+        if val in ("custom", "max-power"):
+            return "custom"
+        elif val in ("performance", "balanced", "quiet", "low-power"):
+            return val
+
+    sys_dir = get_sys_dir()
+    for p in sorted(glob.glob(os.path.join(sys_dir, "class/platform-profile/platform-profile-*/profile"))):
         val = read_file(p, "").lower()
         if val in ("custom", "max-power"):
             return "custom"
         elif val:
             return val
 
-    return read_file(PLATFORM_PROFILE_PATH, "balanced")
+    platform_profile_path = os.path.join(sys_dir, "firmware/acpi/platform_profile")
+    if not os.path.exists(platform_profile_path):
+        platform_profile_path = PLATFORM_PROFILE_PATH
+    return read_file(platform_profile_path, "balanced")
 
 def get_legion_profile_path():
-    for p in glob.glob("/sys/class/platform-profile/platform-profile-*"):
+    sys_dir = get_sys_dir()
+    for p in glob.glob(os.path.join(sys_dir, "class/platform-profile/platform-profile-*")):
         try:
             with open(os.path.join(p, "name")) as f:
                 if "lenovo-legion" in f.read():
@@ -89,52 +210,67 @@ def get_legion_profile_path():
 def set_hardware_profile(p):
     p = p.lower()
     legion_path = get_legion_profile_path()
+    sys_root = get_sys_root()
+    powermode_path = os.path.join(sys_root, "powermode")
+    fullspeed_path = os.path.join(sys_root, "fan_fullspeed")
+    lockfan_path = os.path.join(sys_root, "lockfancontroller")
+    thermal_mode_path = os.path.join(sys_root, "thermal_mode")
+
     if p in ("custom", "max-power"):
         if legion_path:
             write_file(legion_path, "custom")
         else:
-            write_file(POWERMODE_PATH, "255")
-        if os.path.isfile(FULLSPEED_PATH):
-            write_file(FULLSPEED_PATH, "1")
-        if os.path.isfile(LOCKFAN_PATH):
-            write_file(LOCKFAN_PATH, "0")
+            write_file(powermode_path, "255")
+        if os.path.isfile(thermal_mode_path):
+            write_file(thermal_mode_path, "custom")
+        if os.path.isfile(fullspeed_path):
+            write_file(fullspeed_path, "1")
+        if os.path.isfile(lockfan_path):
+            write_file(lockfan_path, "0")
         return True
     elif p == "performance":
         if legion_path:
             write_file(legion_path, "performance")
         else:
-            write_file(POWERMODE_PATH, "3")
-        if os.path.isfile(FULLSPEED_PATH):
-            write_file(FULLSPEED_PATH, "0")
-        if os.path.isfile(LOCKFAN_PATH):
-            write_file(LOCKFAN_PATH, "0")
+            write_file(powermode_path, "3")
+        if os.path.isfile(thermal_mode_path):
+            write_file(thermal_mode_path, "performance")
+        if os.path.isfile(fullspeed_path):
+            write_file(fullspeed_path, "0")
+        if os.path.isfile(lockfan_path):
+            write_file(lockfan_path, "0")
         return True
     elif p == "balanced":
         if legion_path:
             write_file(legion_path, "balanced")
         else:
-            write_file(POWERMODE_PATH, "2")
-        if os.path.isfile(FULLSPEED_PATH):
-            write_file(FULLSPEED_PATH, "0")
-        if os.path.isfile(LOCKFAN_PATH):
-            write_file(LOCKFAN_PATH, "0")
+            write_file(powermode_path, "2")
+        if os.path.isfile(thermal_mode_path):
+            write_file(thermal_mode_path, "balanced")
+        if os.path.isfile(fullspeed_path):
+            write_file(fullspeed_path, "0")
+        if os.path.isfile(lockfan_path):
+            write_file(lockfan_path, "0")
         return True
     elif p in ("quiet", "low-power"):
         if legion_path:
             write_file(legion_path, "low-power")
         else:
-            write_file(POWERMODE_PATH, "1")
-        if os.path.isfile(FULLSPEED_PATH):
-            write_file(FULLSPEED_PATH, "0")
-        if os.path.isfile(LOCKFAN_PATH):
-            write_file(LOCKFAN_PATH, "0")
+            write_file(powermode_path, "1")
+        if os.path.isfile(thermal_mode_path):
+            write_file(thermal_mode_path, "quiet")
+        if os.path.isfile(fullspeed_path):
+            write_file(fullspeed_path, "0")
+        if os.path.isfile(lockfan_path):
+            write_file(lockfan_path, "0")
         return True
     return False
 
 def set_rapl_limit(pl1_w, pl2_w):
     pl1_uw = pl1_w * 1000000
     pl2_uw = pl2_w * 1000000
-    for zone in glob.glob("/sys/class/powercap/intel-rapl:*") + glob.glob("/sys/class/powercap/intel-rapl-mmio:*"):
+    sys_dir = get_sys_dir()
+    for zone in glob.glob(os.path.join(sys_dir, "class/powercap/intel-rapl:*")) + glob.glob(os.path.join(sys_dir, "class/powercap/intel-rapl-mmio:*")):
         if not os.path.isdir(zone):
             continue
         name_file = os.path.join(zone, "name")
@@ -150,38 +286,59 @@ def set_rapl_limit(pl1_w, pl2_w):
             write_file(os.path.join(zone, "constraint_0_power_limit_uw"), str(pl1_uw))
             write_file(os.path.join(zone, "constraint_1_power_limit_uw"), str(pl2_uw))
 
-    # Also synchronize EC power limits in /sys/devices/platform/legion
-    legion_dir = "/sys/devices/platform/legion"
+    # Also synchronize EC power limits in LOQ_SYS_ROOT
+    legion_dir = get_sys_root()
     if os.path.isdir(legion_dir):
         write_file(os.path.join(legion_dir, "cpu_longterm_powerlimit"), str(pl1_w))
         write_file(os.path.join(legion_dir, "cpu_shortterm_powerlimit"), str(pl2_w))
         write_file(os.path.join(legion_dir, "cpu_cross_loading_powerlimit"), str(pl1_w))
 
 def set_governor(gov):
-    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+    sys_dir = get_sys_dir()
+    for f in glob.glob(os.path.join(sys_dir, "devices/system/cpu/cpu*/cpufreq/scaling_governor")):
         write_file(f, gov)
 
 def set_epp(preference):
-    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"):
+    sys_dir = get_sys_dir()
+    for f in glob.glob(os.path.join(sys_dir, "devices/system/cpu/cpu*/cpufreq/energy_performance_preference")):
         write_file(f, preference)
 
 def set_turbo(disabled):
-    write_file(NO_TURBO_PATH, "1" if disabled else "0")
+    sys_dir = get_sys_dir()
+    no_turbo_path = os.path.join(sys_dir, "devices/system/cpu/intel_pstate/no_turbo")
+    if not os.path.exists(no_turbo_path):
+        no_turbo_path = NO_TURBO_PATH
+    write_file(no_turbo_path, "1" if disabled else "0")
 
 def set_gpu_tgp(ctgp_w, ppab_w):
-    write_file("/sys/devices/platform/legion/gpu_ctgp_powerlimit", str(ctgp_w))
-    write_file("/sys/devices/platform/legion/gpu_ppab_powerlimit", str(ppab_w))
+    legion_dir = get_sys_root()
+    write_file(os.path.join(legion_dir, "gpu_ctgp_powerlimit"), str(ctgp_w))
+    write_file(os.path.join(legion_dir, "gpu_ppab_powerlimit"), str(ppab_w))
 
 def set_display_rate(rate_str):
     if os.path.exists(REFRESH_SCRIPT):
         try:
-            import subprocess
             subprocess.run([REFRESH_SCRIPT, rate_str], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=False)
         except Exception:
             pass
 
 def find_legion_hwmon():
-    for d in glob.glob("/sys/devices/platform/legion/hwmon/hwmon*") + glob.glob("/sys/class/hwmon/hwmon*"):
+    # 1. Environment override
+    env_hwmon = os.environ.get("LOQ_HWMON_DIR")
+    if env_hwmon and os.path.isdir(env_hwmon):
+        return env_hwmon
+
+    # 2. Search under LOQ_SYS_ROOT first
+    sys_root = get_sys_root()
+    search_dirs = glob.glob(os.path.join(sys_root, "hwmon", "hwmon*"))
+
+    # 3. Search system hwmon paths
+    sys_dir = get_sys_dir()
+    search_dirs += glob.glob(os.path.join(sys_dir, "class", "hwmon", "hwmon*"))
+    if not os.environ.get("LOQ_SYS_ROOT"):
+        search_dirs += glob.glob("/sys/class/hwmon/hwmon*")
+
+    for d in search_dirs:
         name_path = os.path.join(d, "name")
         if os.path.isfile(name_path):
             try:
@@ -190,10 +347,23 @@ def find_legion_hwmon():
                         return d
             except Exception:
                 pass
-    return "/sys/class/hwmon/hwmon5"
+
+    if env_hwmon:
+        return env_hwmon
+
+    sys_root_hwmons = glob.glob(os.path.join(sys_root, "hwmon", "hwmon*"))
+    if sys_root_hwmons:
+        return sys_root_hwmons[0]
+
+    return None
 
 _last_gpu_active_time = 0
 _last_gpu_sample_time = 0.0
+
+def reset_gpu_telemetry_state():
+    global _last_gpu_active_time, _last_gpu_sample_time
+    _last_gpu_active_time = 0
+    _last_gpu_sample_time = 0.0
 
 def get_gpu_telemetry(gpu_status):
     global _last_gpu_active_time, _last_gpu_sample_time
@@ -204,19 +374,34 @@ def get_gpu_telemetry(gpu_status):
 
     now = time.monotonic()
     curr_active = 0
+    sys_dir = get_sys_dir()
+    pci_active_time_path = os.path.join(
+        sys_dir, "bus", "pci", "devices", "0000:01:00.0", "power", "runtime_active_time"
+    )
+    if not os.path.exists(pci_active_time_path) and not os.environ.get("LOQ_SYS_ROOT"):
+        pci_active_time_path = "/sys/bus/pci/devices/0000:01:00.0/power/runtime_active_time"
+
     try:
-        with open("/sys/bus/pci/devices/0000:01:00.0/power/runtime_active_time") as f:
-            curr_active = int(f.read().strip())
+        with open(pci_active_time_path, "r") as f:
+            content = f.read().strip()
+            curr_active = int(content) if content.isdigit() else 0
     except Exception:
-        pass
+        curr_active = 0
 
     usage = 0
-    if _last_gpu_sample_time > 0 and curr_active >= _last_gpu_active_time:
+    if _last_gpu_sample_time > 0:
         dt_ms = (now - _last_gpu_sample_time) * 1000.0
-        if dt_ms > 100:
-            da_ms = curr_active - _last_gpu_active_time
-            ratio = min(1.0, max(0.0, da_ms / dt_ms))
-            usage = min(100, max(10, int(ratio * 100)))
+        da_ms = curr_active - _last_gpu_active_time
+        # Defensive guards: positive delta time > 100ms and non-negative active delta
+        if dt_ms > 100 and da_ms >= 0:
+            try:
+                ratio = min(1.0, max(0.0, da_ms / dt_ms))
+                if da_ms > 0:
+                    usage = min(100, max(10, int(ratio * 100)))
+                else:
+                    usage = 0
+            except ZeroDivisionError:
+                usage = 0
 
     _last_gpu_active_time = curr_active
     _last_gpu_sample_time = now
@@ -235,51 +420,99 @@ def update_status_json(profile, target_state, ac_on):
     else:
         pl1, pl2 = 35, 65
     display_hz = 60 if is_saver else 144
-    turbo = not (read_file(NO_TURBO_PATH, "0") == "1")
-    gpu_status = read_file(GPU_RUNTIME_PATH, "unknown")
+
+    sys_dir = get_sys_dir()
+    sys_root = get_sys_root()
+
+    no_turbo_path = os.path.join(sys_dir, "devices/system/cpu/intel_pstate/no_turbo")
+    if not os.path.exists(no_turbo_path):
+        no_turbo_path = NO_TURBO_PATH
+    turbo = not (read_file(no_turbo_path, "0") == "1")
+
+    gpu_runtime_path = os.path.join(sys_dir, "bus/pci/devices/0000:01:00.0/power/runtime_status")
+    if not os.path.exists(gpu_runtime_path) and not os.environ.get("LOQ_SYS_ROOT"):
+        gpu_runtime_path = GPU_RUNTIME_PATH
+    gpu_status = read_file(gpu_runtime_path, "unknown")
     gpu_usage, gpu_power_w = get_gpu_telemetry(gpu_status)
-    epp = read_file("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", "default")
+
+    epp_path = os.path.join(sys_dir, "devices/system/cpu/cpu0/cpufreq/energy_performance_preference")
+    epp = read_file(epp_path, "default") if os.path.exists(epp_path) else read_file("/sys/devices/system/cpu/cpu0/cpufreq/energy_performance_preference", "default")
 
     # MUX & Hardware Telemetry
-    raw_igpu = read_file("/sys/devices/platform/legion/igpumode", "2")
+    raw_igpu = read_file(os.path.join(sys_root, "igpumode"), "")
+    if not raw_igpu:
+        raw_igpu = read_file(os.path.join(sys_root, "igpu_mode"), "2")
     igpu_mode = int(raw_igpu) if raw_igpu.isdigit() else 2
 
     # Hwmon telemetry
     hwmon_dir = find_legion_hwmon()
-    fan1 = read_file(os.path.join(hwmon_dir, "fan1_input"), "0")
-    fan2 = read_file(os.path.join(hwmon_dir, "fan2_input"), "0")
-    cpu_t = read_file(os.path.join(hwmon_dir, "temp1_input"), "0")
-    gpu_t = read_file(os.path.join(hwmon_dir, "temp2_input"), "0")
+    if hwmon_dir and os.path.isdir(hwmon_dir):
+        fan1 = read_file(os.path.join(hwmon_dir, "fan1_input"), "0")
+        fan2 = read_file(os.path.join(hwmon_dir, "fan2_input"), "0")
+        cpu_t = read_file(os.path.join(hwmon_dir, "temp1_input"), "0")
+        gpu_t = read_file(os.path.join(hwmon_dir, "temp2_input"), "0")
+    else:
+        fan1 = "0"
+        fan2 = "0"
+        cpu_t = "0"
+        gpu_t = "0"
+
+    fan1_rpm = int(fan1) if fan1.isdigit() else 0
+    fan2_rpm = int(fan2) if fan2.isdigit() else 0
     cpu_temp = int(cpu_t) // 1000 if cpu_t.isdigit() else 0
     gpu_temp = int(gpu_t) // 1000 if gpu_t.isdigit() else 0
 
-    fullspeed = (read_file("/sys/devices/platform/legion/fan_fullspeed", "0") == "1")
-    conservation = (read_file("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode", "0") == "1")
-    fn_lock = (read_file("/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/fn_lock", "0") == "1")
-    touchpad = (read_file("/sys/devices/platform/legion/touchpad", "1") == "1")
-    winkey = (read_file("/sys/devices/platform/legion/winkey", "1") == "1")
-    overdrive = (read_file("/sys/devices/platform/legion/overdrive", "0") == "1")
-    raw_ctgp = read_file("/sys/devices/platform/legion/gpu_ctgp_powerlimit", "105")
-    raw_ppab = read_file("/sys/devices/platform/legion/gpu_ppab_powerlimit", "25")
+    fullspeed = (read_file(os.path.join(sys_root, "fan_fullspeed"), "0") == "1")
+
+    # Ideapad attributes: check sys_root first, then sysfs drivers path
+    conservation_path = os.path.join(sys_root, "conservation_mode")
+    if not os.path.exists(conservation_path) and not os.environ.get("LOQ_SYS_ROOT"):
+        conservation_path = "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/conservation_mode"
+    conservation = (read_file(conservation_path, "0") == "1")
+
+    fn_lock_path = os.path.join(sys_root, "fn_lock")
+    if not os.path.exists(fn_lock_path) and not os.environ.get("LOQ_SYS_ROOT"):
+        fn_lock_path = "/sys/bus/platform/drivers/ideapad_acpi/VPC2004:00/fn_lock"
+    fn_lock = (read_file(fn_lock_path, "0") == "1")
+
+    touchpad = (read_file(os.path.join(sys_root, "touchpad"), "1") == "1")
+    winkey = (read_file(os.path.join(sys_root, "winkey"), "1") == "1")
+    overdrive = (read_file(os.path.join(sys_root, "overdrive"), "0") == "1")
+    raw_ctgp = read_file(os.path.join(sys_root, "gpu_ctgp_powerlimit"), "105")
+    raw_ppab = read_file(os.path.join(sys_root, "gpu_ppab_powerlimit"), "25")
     ctgp_val = int(raw_ctgp) if raw_ctgp.isdigit() else 105
     ppab_val = int(raw_ppab) if raw_ppab.isdigit() else 25
-    lockfan = (read_file("/sys/devices/platform/legion/lockfancontroller", "0") == "1")
+    lockfan = (read_file(os.path.join(sys_root, "lockfancontroller"), "0") == "1")
 
-    # LLT Features: Keyboard backlight, I/O Port lighting, and Battery health
-    raw_kbd = read_file("/sys/devices/platform/legion/leds/platform::kbd_backlight_1/brightness", "1")
+    # LEDs: Keyboard backlight, I/O Port lighting
+    raw_kbd = read_file(os.path.join(sys_root, "leds/platform::kbd_backlight_1/brightness"), "1")
     kbd_backlight = int(raw_kbd) if raw_kbd.isdigit() else 1
-    ioport_light = (read_file("/sys/devices/platform/legion/leds/platform::ioport/brightness", "1") == "1")
+    ioport_light = (read_file(os.path.join(sys_root, "leds/platform::ioport/brightness"), "1") == "1")
 
-    raw_bat_cap = read_file("/sys/class/power_supply/BAT1/capacity", "0")
-    bat_cap = int(raw_bat_cap) if raw_bat_cap.isdigit() else 0
-    bat_status = read_file("/sys/class/power_supply/BAT1/status", "Unknown")
-    raw_bat_full = read_file("/sys/class/power_supply/BAT1/energy_full", "0")
-    raw_bat_design = read_file("/sys/class/power_supply/BAT1/energy_full_design", "0")
-    raw_bat_cycles = read_file("/sys/class/power_supply/BAT1/cycle_count", "0")
-    bat_full = int(raw_bat_full) if raw_bat_full.isdigit() else 0
-    bat_design = int(raw_bat_design) if raw_bat_design.isdigit() else 0
-    bat_cycles = int(raw_bat_cycles) if raw_bat_cycles.isdigit() else 0
-    bat_health = round((bat_full / bat_design * 100), 1) if bat_design > 0 else 100.0
+    # Battery
+    bat_dir = find_battery_path()
+    if bat_dir:
+        raw_bat_cap = read_file(os.path.join(bat_dir, "capacity"), "0")
+        bat_cap = int(raw_bat_cap) if raw_bat_cap.isdigit() else 0
+        bat_status = read_file(os.path.join(bat_dir, "status"), "Unknown")
+        raw_bat_full = read_file(os.path.join(bat_dir, "energy_full"), "0")
+        if not raw_bat_full or raw_bat_full == "0":
+            raw_bat_full = read_file(os.path.join(bat_dir, "charge_full"), "0")
+        raw_bat_design = read_file(os.path.join(bat_dir, "energy_full_design"), "0")
+        if not raw_bat_design or raw_bat_design == "0":
+            raw_bat_design = read_file(os.path.join(bat_dir, "charge_full_design"), "0")
+        raw_bat_cycles = read_file(os.path.join(bat_dir, "cycle_count"), "0")
+        bat_full = int(raw_bat_full) if raw_bat_full.isdigit() else 0
+        bat_design = int(raw_bat_design) if raw_bat_design.isdigit() else 0
+        bat_cycles = int(raw_bat_cycles) if raw_bat_cycles.isdigit() else 0
+        bat_health = round((bat_full / bat_design * 100), 1) if bat_design > 0 else 100.0
+    else:
+        bat_cap = 0
+        bat_status = "Unknown"
+        bat_full = 0
+        bat_design = 0
+        bat_cycles = 0
+        bat_health = 100.0
 
     canonical_profile = "quiet" if profile in ("low-power", "quiet") else profile
 
@@ -296,8 +529,8 @@ def update_status_json(profile, target_state, ac_on):
         "gpu_power_w": gpu_power_w,
         "display_hz": display_hz,
         "igpu_mode": igpu_mode,
-        "fan1_rpm": int(fan1) if fan1.isdigit() else 0,
-        "fan2_rpm": int(fan2) if fan2.isdigit() else 0,
+        "fan1_rpm": fan1_rpm,
+        "fan2_rpm": fan2_rpm,
         "cpu_temp": cpu_temp,
         "gpu_temp": gpu_temp,
         "fan_fullspeed": fullspeed,
@@ -320,21 +553,17 @@ def update_status_json(profile, target_state, ac_on):
         "battery_wh_design": round(bat_design / 1000000.0, 1),
         "bootlogo_enabled": (len(read_file("/sys/firmware/efi/efivars/LBLDESP-871455d0-5576-4fb8-9865-af0824463b9e", "")) > 0 and os.path.exists("/boot/efi/EFI/Lenovo/Logo"))
     }
-    json_bytes = json.dumps(data, indent=2).encode("utf-8")
 
-    for path in STATUS_FILES:
-        target_dir = os.path.dirname(path)
-        if os.path.isdir(target_dir):
-            try:
-                # Write in-place to preserve file inode so inotify file watchers trigger immediately
-                with open(path, "wb") as f:
-                    f.write(json_bytes)
-                os.chmod(path, 0o644)
-            except Exception:
-                pass
+    status_files = get_status_files()
+    for path in status_files:
+        write_atomic_json(path, data)
+
+    return data
 
 def enable_fnq_custom_hardware():
     """Enable Lenovo EC native Fn+Q 4-stage cycle (Blue -> White -> Red -> Pink -> Blue) via CMOS port 0x7A"""
+    if not os.path.exists("/dev/port"):
+        return False
     try:
         fd = os.open("/dev/port", os.O_RDWR)
         # Port 0x72 is index port, 0x73 is data port for extended CMOS/NVRAM
@@ -348,24 +577,25 @@ def enable_fnq_custom_hardware():
         sys.stderr.write(f"[lenovo-power-daemon] Could not set CMOS 0x7A: {e}\n")
         return False
 
-def main():
-    print("[lenovo-power-daemon] Unified ultra-low-overhead power daemon active.", flush=True)
+def setup_poll(poll_obj, poll_fds):
+    for fd in poll_fds:
+        try:
+            poll_obj.unregister(fd)
+            os.close(fd)
+        except Exception:
+            pass
+    poll_fds.clear()
 
-    # Enable native hardware EC Fn+Q 4-stage cycle (Blue -> White -> Red -> Pink -> Blue)
-    enable_fnq_custom_hardware()
-
-    # Ensure fan controller mutex locking is disabled on startup
-    if os.path.isfile(LOCKFAN_PATH):
-        write_file(LOCKFAN_PATH, "0")
-
-    last_profile = None
-    last_target_state = None
-    last_json_write_time = 0.0
-
-    # Register sysfs poll
-    poll_obj = select.poll()
-    poll_fds = []
-    watch_paths = glob.glob("/sys/class/platform-profile/platform-profile-*/profile") + [PLATFORM_PROFILE_PATH, POWERMODE_PATH]
+    sys_dir = get_sys_dir()
+    sys_root = get_sys_root()
+    watch_paths = (
+        glob.glob(os.path.join(sys_dir, "class/platform-profile/platform-profile-*/profile"))
+        + [
+            os.path.join(sys_dir, "firmware/acpi/platform_profile"),
+            PLATFORM_PROFILE_PATH,
+            os.path.join(sys_root, "powermode")
+        ]
+    )
     for p in watch_paths:
         if os.path.exists(p):
             try:
@@ -374,6 +604,28 @@ def main():
                 poll_fds.append(fd)
             except Exception:
                 pass
+
+def main():
+    print("[lenovo-power-daemon] Unified ultra-low-overhead power daemon active.", flush=True)
+
+    # Enable native hardware EC Fn+Q 4-stage cycle (Blue -> White -> Red -> Pink -> Blue)
+    try:
+        enable_fnq_custom_hardware()
+    except Exception as e:
+        sys.stderr.write(f"[lenovo-power-daemon] Startup CMOS init warning: {e}\n")
+
+    # Ensure fan controller mutex locking is disabled on startup
+    lockfan_path = os.path.join(get_sys_root(), "lockfancontroller")
+    if os.path.isfile(lockfan_path):
+        write_file(lockfan_path, "0")
+
+    last_profile = None
+    last_target_state = None
+    last_json_write_time = 0.0
+
+    poll_obj = select.poll()
+    poll_fds = []
+    setup_poll(poll_obj, poll_fds)
 
     while True:
         try:
@@ -393,10 +645,11 @@ def main():
                 print(f"[lenovo-power-daemon] Hardware state changed: {last_profile} -> {curr_profile} (AC={ac_on})", flush=True)
 
                 # Pure change detection: NEVER hijack or fight hardware EC hotkey switching
-                if curr_profile not in ("custom", "max-power") and os.path.isfile(FULLSPEED_PATH):
-                    write_file(FULLSPEED_PATH, "0")
-                elif curr_profile in ("custom", "max-power") and os.path.isfile(FULLSPEED_PATH):
-                    write_file(FULLSPEED_PATH, "1")
+                fullspeed_path = os.path.join(get_sys_root(), "fan_fullspeed")
+                if curr_profile not in ("custom", "max-power") and os.path.isfile(fullspeed_path):
+                    write_file(fullspeed_path, "0")
+                elif curr_profile in ("custom", "max-power") and os.path.isfile(fullspeed_path):
+                    write_file(fullspeed_path, "1")
 
                 last_profile = curr_profile
                 try:
@@ -458,19 +711,34 @@ def main():
 
         except Exception as e:
             sys.stderr.write(f"[lenovo-power-daemon] Loop error: {e}\n")
+            time.sleep(0.2)
 
         # Fast poll timeout (100ms) for instant Fn+Q response without CPU burn
         if poll_fds:
             try:
                 events = poll_obj.poll(100)
                 if events:
-                    for fd, _ in events:
-                        os.lseek(fd, 0, os.SEEK_SET)
-                        os.read(fd, 64)
+                    has_error = False
+                    for fd, event in events:
+                        if event & (select.POLLERR | select.POLLHUP | select.POLLNVAL):
+                            has_error = True
+                            break
+                        try:
+                            os.lseek(fd, 0, os.SEEK_SET)
+                            os.read(fd, 64)
+                        except OSError:
+                            has_error = True
+                            break
+                    if has_error:
+                        setup_poll(poll_obj, poll_fds)
             except Exception:
                 time.sleep(0.1)
+                setup_poll(poll_obj, poll_fds)
         else:
             time.sleep(0.1)
+            # Periodically attempt to attach poll fds if they were unavailable
+            if time.monotonic() - last_json_write_time > 5.0:
+                setup_poll(poll_obj, poll_fds)
 
 if __name__ == "__main__":
     main()
