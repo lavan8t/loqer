@@ -695,9 +695,7 @@ ApplicationWindow {
     Component {
         id: powerPage
         ContentPage {
-            contentY: 650
             baseWidth: 640
-            forceWidth: true
 
             // Live Telemetry Table (Material 3 Expressive, Alternating Row Tints, Zero Dots)
             Rectangle {
@@ -858,9 +856,7 @@ ApplicationWindow {
     Component {
         id: curvesPage
         ContentPage {
-            contentY: 650
             baseWidth: 640
-            forceWidth: true
 
             NoticeBox {
                 visible: root.curveAppliedFeedback
@@ -1041,7 +1037,6 @@ ApplicationWindow {
         id: hardwarePage
         ContentPage {
             baseWidth: 640
-            forceWidth: true
 
             // 1. Battery Health & Management
             ContentSection {
@@ -1265,7 +1260,8 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "CPU Long-Term (PL1)"
-                        Layout.preferredWidth: 150
+                        Layout.preferredWidth: 230
+                        Layout.minimumWidth: 230
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
@@ -1281,7 +1277,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPl1}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 42
+                        Layout.preferredWidth: 46
+                        Layout.minimumWidth: 46
                         horizontalAlignment: Text.AlignRight
                         color: Appearance.colors.colPrimary
                     }
@@ -1298,7 +1295,8 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "CPU Short-Term (PL2)"
-                        Layout.preferredWidth: 150
+                        Layout.preferredWidth: 230
+                        Layout.minimumWidth: 230
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
@@ -1314,7 +1312,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPl2}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 42
+                        Layout.preferredWidth: 46
+                        Layout.minimumWidth: 46
                         horizontalAlignment: Text.AlignRight
                         color: Appearance.colors.colPrimary
                     }
@@ -1331,7 +1330,8 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "GPU Base cTGP"
-                        Layout.preferredWidth: 150
+                        Layout.preferredWidth: 230
+                        Layout.minimumWidth: 230
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
@@ -1347,7 +1347,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderCtgp}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 42
+                        Layout.preferredWidth: 46
+                        Layout.minimumWidth: 46
                         horizontalAlignment: Text.AlignRight
                         color: "#EF4444"
                     }
@@ -1364,7 +1365,8 @@ ApplicationWindow {
                     }
                     StyledText {
                         text: "GPU Dynamic Boost (PPAB)"
-                        Layout.preferredWidth: 150
+                        Layout.preferredWidth: 230
+                        Layout.minimumWidth: 230
                         color: Appearance.colors.colOnSecondaryContainer
                     }
                     StyledSlider {
@@ -1380,7 +1382,8 @@ ApplicationWindow {
                     StyledText {
                         text: `${root.sliderPpab}W`
                         font.weight: Font.Bold
-                        Layout.preferredWidth: 42
+                        Layout.preferredWidth: 46
+                        Layout.minimumWidth: 46
                         horizontalAlignment: Text.AlignRight
                         color: "#EF4444"
                     }
@@ -1397,6 +1400,9 @@ ApplicationWindow {
                     }
 
                     RippleButtonWithIcon {
+                        Layout.fillWidth: false
+                        Layout.minimumWidth: implicitWidth
+                        Layout.alignment: Qt.AlignVCenter
                         materialIcon: "check"
                         mainText: "Apply Limits"
                         onClicked: root.applyPowerLimits(root.sliderPl1, root.sliderPl2, root.sliderCtgp, root.sliderPpab)
