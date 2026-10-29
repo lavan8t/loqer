@@ -3,6 +3,9 @@
 #include <QFontDatabase>
 #include <QIcon>
 #include <QDebug>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "qml_shims.hpp"
 #include "lenovo_hal.hpp"
 
@@ -43,7 +46,20 @@ int main(int argc, char *argv[]) {
     qmlRegisterType<IconImageShim>("Quickshell.Widgets", 1, 0, "IconImage");
 
     // Pre-initialize Lenovo Hardware Layer
-    LenovoHal::instance();
+    LenovoHal &hal = LenovoHal::instance();
+
+    // Verify LOQ hardware support
+    if (!hal.isSupportedLoqDevice()) {
+#ifdef _WIN32
+        MessageBoxW(NULL,
+            L"This device is not supported.\n\nLOQer is designed exclusively for Lenovo LOQ series laptops.\n\nThe application will now exit.",
+            L"LOQer - Unsupported Device",
+            MB_ICONERROR | MB_OK);
+#else
+        qCritical() << "Error: Unsupported hardware. LOQer requires a supported Lenovo LOQ laptop.";
+#endif
+        return 1;
+    }
 
     QQmlApplicationEngine engine;
     engine.addImportPath("qrc:/");

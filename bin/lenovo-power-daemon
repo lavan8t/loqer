@@ -134,12 +134,32 @@ def set_hardware_profile(p):
 def set_rapl_limit(pl1_w, pl2_w):
     pl1_uw = pl1_w * 1000000
     pl2_uw = pl2_w * 1000000
-    for zone in glob.glob("/sys/class/powercap/intel-rapl*") + glob.glob("/sys/class/powercap/intel-rapl-mmio*"):
+    for zone in glob.glob("/sys/class/powercap/intel-rapl:*") + glob.glob("/sys/class/powercap/intel-rapl-mmio:*"):
         if not os.path.isdir(zone):
             continue
-        write_file(os.path.join(zone, "enabled"), "1")
-        write_file(os.path.join(zone, "constraint_0_power_limit_uw"), str(pl1_uw))
-        write_file(os.path.join(zone, "constraint_1_power_limit_uw"), str(pl2_uw))
+        name_file = os.path.join(zone, "name")
+        zone_name = read_file(name_file, "").strip().lower() if os.path.isfile(name_file) else ""
+        if zone_name == "psys":
+            # psys is Platform System (entire motherboard / AC adapter capacity).
+            # Never clamp total platform power to CPU limits! Unclamp to 230W.
+            write_file(os.path.join(zone, "constraint_0_power_limit_uw"), "230000000")
+            write_file(os.path.join(zone, "constraint_1_power_limit_uw"), "230000000")
+            continue
+        if "package" in zone_name or not zone_name:
+            write_file(os.path.join(zone, "enabled"), "1")
+            write_file(os.path.join(zone, "constraint_0_power_limit_uw"), str(pl1_uw))
+            write_file(os.path.join(zone, "constraint_1_power_limit_uw"), str(pl2_uw))
+
+    # Also synchronize EC power limits in /sys/devices/platform/legion
+    legion_dir = "/sys/devices/platform/legion"
+    if os.path.isdir(legion_dir):
+        write_file(os.path.join(legion_dir, "cpu_longterm_powerlimit"), str(pl1_w))
+        write_file(os.path.join(legion_dir, "cpu_shortterm_powerlimit"), str(pl2_w))
+        write_file(os.path.join(legion_dir, "cpu_cross_loading_powerlimit"), str(pl1_w))
+
+def set_governor(gov):
+    for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"):
+        write_file(f, gov)
 
 def set_epp(preference):
     for f in glob.glob("/sys/devices/system/cpu/cpu*/cpufreq/energy_performance_preference"):
@@ -162,8 +182,14 @@ def set_display_rate(rate_str):
 
 def update_status_json(profile, target_state, ac_on):
     is_saver = (target_state == "quiet_battery")
-    pl1 = 15 if is_saver else 55
-    pl2 = 25 if is_saver else 115
+    if is_saver:
+        pl1, pl2 = 15, 25
+    elif profile in ("custom", "max-power", "performance"):
+        pl1, pl2 = 95, 135
+    elif profile == "balanced":
+        pl1, pl2 = 55, 115
+    else:
+        pl1, pl2 = 35, 65
     display_hz = 60 if is_saver else 144
     turbo = not (read_file(NO_TURBO_PATH, "0") == "1")
     gpu_status = read_file(GPU_RUNTIME_PATH, "unknown")
@@ -333,15 +359,20 @@ def main():
                         set_display_rate("60")
                 else:
                     target_state = "standard"
-                    set_rapl_limit(55, 115)
                     set_turbo(False)
                     if active_profile in ("custom", "max-power", "performance"):
+                        set_rapl_limit(95, 135)
+                        set_governor("performance")
                         set_epp("performance")
                         set_gpu_tgp(105, 25)  # Maximum supported 105W cTGP + 25W Dynamic Boost = 130W!
                     elif active_profile == "balanced":
+                        set_rapl_limit(55, 115)
+                        set_governor("powersave")
                         set_epp("balance_performance")
                         set_gpu_tgp(60, 20)
                     else:
+                        set_rapl_limit(35, 65)
+                        set_governor("powersave")
                         set_epp("balance_power")
                         set_gpu_tgp(45, 15)
 

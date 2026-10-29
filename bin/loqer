@@ -5,6 +5,60 @@ set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
+# -------------------------------------------------------------
+# LOQ Hardware Verification
+# -------------------------------------------------------------
+is_valid_loq() {
+    [ "${LOQER_FORCE_DEVICE:-0}" = "1" ] && return 0
+    
+    local vendor=""
+    local prod=""
+    local fam=""
+    local ver=""
+    
+    [ -f /sys/class/dmi/id/sys_vendor ] && vendor="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
+    [ -f /sys/class/dmi/id/product_name ] && prod="$(cat /sys/class/dmi/id/product_name 2>/dev/null || true)"
+    [ -f /sys/class/dmi/id/product_family ] && fam="$(cat /sys/class/dmi/id/product_family 2>/dev/null || true)"
+    [ -f /sys/class/dmi/id/product_version ] && ver="$(cat /sys/class/dmi/id/product_version 2>/dev/null || true)"
+    
+    local combined="${prod} ${fam} ${ver}"
+    local vendor_upper
+    vendor_upper="$(echo "$vendor" | tr '[:lower:]' '[:upper:]')"
+    local combined_upper
+    combined_upper="$(echo "$combined" | tr '[:lower:]' '[:upper:]')"
+    
+    # Must be Lenovo hardware and identify as LOQ series
+    if [[ "$vendor_upper" == *"LENOVO"* ]] && [[ "$combined_upper" == *"LOQ"* ]]; then
+        return 0
+    fi
+    
+    return 1
+}
+
+show_unsupported_dialog() {
+    local vendor=""
+    local ver=""
+    [ -f /sys/class/dmi/id/sys_vendor ] && vendor="$(cat /sys/class/dmi/id/sys_vendor 2>/dev/null || true)"
+    [ -f /sys/class/dmi/id/product_version ] && ver="$(cat /sys/class/dmi/id/product_version 2>/dev/null || true)"
+    local details="${vendor:-Unknown} ${ver:-Device}"
+    local title="LOQer - Unsupported Device"
+    local message="This device is not supported.\n\nLOQer is designed exclusively for Lenovo LOQ series laptops.\n\nDetected Hardware:\n${details}\n\nThe application will now exit."
+
+    if command -v zenity >/dev/null 2>&1; then
+        zenity --error --title="$title" --text="$message" --width=420 2>/dev/null || true
+    elif command -v kdialog >/dev/null 2>&1; then
+        kdialog --title "$title" --error "$message" 2>/dev/null || true
+    elif command -v notify-send >/dev/null 2>&1; then
+        notify-send -u critical -i dialog-error "$title" "$message" 2>/dev/null || true
+    fi
+    echo -e "\n[Error] $title: $message\n" >&2
+}
+
+if ! is_valid_loq; then
+    show_unsupported_dialog
+    exit 1
+fi
+
 CANDIDATES=(
     "${LOQER_UI_PATH:-}"
     "${SCRIPT_DIR}/../ui/loqControl.qml"

@@ -27,8 +27,38 @@ ApplicationWindow {
         source: Qt.resolvedUrl("fonts/GoogleSansFlex.ttf")
     }
 
+    FileView { id: modelFamilyFile; path: "/sys/class/dmi/id/product_family" }
+    FileView { id: modelVersionFile; path: "/sys/class/dmi/id/product_version" }
+    FileView { id: modelNameFile; path: "/sys/class/dmi/id/product_name" }
+    FileView { id: sysVendorFile; path: "/sys/class/dmi/id/sys_vendor" }
+
+    property string detectedModelName: {
+        try {
+            const fam = modelFamilyFile.text().trim();
+            if (fam) return fam;
+            const ver = modelVersionFile.text().trim();
+            if (ver) return ver;
+            const prod = modelNameFile.text().trim();
+            if (prod) return `LOQ ${prod}`;
+        } catch(e) {}
+        return "LOQ Laptop";
+    }
+
     Component.onCompleted: {
         console.log("LOQer GoogleSans font loaded:", fontGoogleSans.name, "status:", fontGoogleSans.status);
+
+        // Hardware Compatibility Check
+        const vendor = (sysVendorFile.text().trim() || "").toUpperCase();
+        const combined = `${modelVersionFile.text().trim()} ${modelFamilyFile.text().trim()} ${modelNameFile.text().trim()}`.toUpperCase();
+        if (vendor && !vendor.includes("LENOVO") && !combined.includes("LOQ")) {
+            console.error("Unsupported hardware detected:", vendor, combined);
+            Quickshell.execDetached(["zenity", "--error", "--title=LOQer - Unsupported Device",
+                "--text=This device is not supported.\n\nLOQer is designed exclusively for Lenovo LOQ series laptops.\n\nThe application will now exit.",
+                "--width=420"]);
+            Qt.quit();
+            return;
+        }
+
         MaterialThemeLoader.reapplyTheme();
         loadCurveProc.running = true;
         bootlogoStatusProc.running = true;
@@ -527,7 +557,7 @@ ApplicationWindow {
                     // PC Model Name below ring (Centered, No background fill)
                     StyledText {
                         Layout.alignment: Qt.AlignHCenter
-                        text: "LOQ 15IAX9"
+                        text: root.detectedModelName
                         font {
                             family: Appearance.font.family.title
                             pixelSize: Appearance.font.pixelSize.normal

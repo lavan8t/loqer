@@ -101,6 +101,60 @@ void LenovoHal::initWmi() {
 #endif
 }
 
+bool LenovoHal::isSupportedLoqDevice() {
+#ifdef _WIN32
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\BIOS", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        wchar_t vendor[256] = {0};
+        wchar_t family[256] = {0};
+        wchar_t version[256] = {0};
+        wchar_t product[256] = {0};
+        DWORD sz = sizeof(vendor);
+        RegQueryValueExW(hKey, L"SystemManufacturer", NULL, NULL, (LPBYTE)vendor, &sz);
+        sz = sizeof(family);
+        RegQueryValueExW(hKey, L"SystemFamily", NULL, NULL, (LPBYTE)family, &sz);
+        sz = sizeof(version);
+        RegQueryValueExW(hKey, L"SystemVersion", NULL, NULL, (LPBYTE)version, &sz);
+        sz = sizeof(product);
+        RegQueryValueExW(hKey, L"SystemProductName", NULL, NULL, (LPBYTE)product, &sz);
+        RegCloseKey(hKey);
+
+        QString v = QString::fromWCharArray(vendor).toUpper();
+        QString combined = (QString::fromWCharArray(family) + " " + QString::fromWCharArray(version) + " " + QString::fromWCharArray(product)).toUpper();
+        if (v.contains("LENOVO") && combined.contains("LOQ")) {
+            return true;
+        }
+    }
+    if (qEnvironmentVariableIsSet("LOQER_FORCE_DEVICE") && qgetenv("LOQER_FORCE_DEVICE") == "1") {
+        return true;
+    }
+    return false;
+#else
+    return true;
+#endif
+}
+
+QString LenovoHal::getDeviceModelName() {
+#ifdef _WIN32
+    HKEY hKey;
+    if (RegOpenKeyExW(HKEY_LOCAL_MACHINE, L"HARDWARE\\DESCRIPTION\\System\\BIOS", 0, KEY_READ, &hKey) == ERROR_SUCCESS) {
+        wchar_t family[256] = {0};
+        DWORD sz = sizeof(family);
+        if (RegQueryValueExW(hKey, L"SystemFamily", NULL, NULL, (LPBYTE)family, &sz) == ERROR_SUCCESS && wcslen(family) > 0) {
+            RegCloseKey(hKey);
+            return QString::fromWCharArray(family);
+        }
+        sz = sizeof(family);
+        if (RegQueryValueExW(hKey, L"SystemVersion", NULL, NULL, (LPBYTE)family, &sz) == ERROR_SUCCESS && wcslen(family) > 0) {
+            RegCloseKey(hKey);
+            return QString::fromWCharArray(family);
+        }
+        RegCloseKey(hKey);
+    }
+#endif
+    return "LOQ 15IAX9";
+}
+
 void LenovoHal::updateHardwareState() {
 #ifdef _WIN32
     SYSTEM_POWER_STATUS sps;

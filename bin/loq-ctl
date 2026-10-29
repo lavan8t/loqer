@@ -12,6 +12,34 @@ import subprocess
 STATUS_FILE = "/run/user/1000/lenovo-power-status.json"
 LEGION_DIR = "/sys/devices/platform/legion"
 
+def check_loq_hardware():
+    if os.environ.get("LOQER_FORCE_DEVICE") == "1":
+        return True
+    vendor = ""
+    try:
+        with open("/sys/class/dmi/id/sys_vendor") as f:
+            vendor = f.read().strip().upper()
+    except Exception:
+        pass
+    combined = ""
+    for node in ("product_name", "product_family", "product_version"):
+        p = f"/sys/class/dmi/id/{node}"
+        if os.path.exists(p):
+            try:
+                with open(p) as f:
+                    combined += " " + f.read().strip().upper()
+            except Exception:
+                pass
+    if "LENOVO" in vendor and "LOQ" in combined:
+        return True
+    if os.path.isdir(LEGION_DIR):
+        return True
+    return False
+
+if not check_loq_hardware() and len(sys.argv) > 1 and sys.argv[1] not in ("-h", "--help"):
+    sys.stderr.write("Error: Unsupported device. LOQer requires a supported Lenovo LOQ laptop.\n")
+    sys.exit(1)
+
 # Auto-elevate to root via passwordless sudo if writing hardware registers
 if os.geteuid() != 0 and len(sys.argv) > 1:
     cmd = sys.argv[1].lower()

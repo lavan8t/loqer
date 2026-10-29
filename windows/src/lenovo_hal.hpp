@@ -19,6 +19,9 @@ public:
     int setBootLogo(const QString &imagePath);
     int resetBootLogo();
 
+    bool isSupportedLoqDevice();
+    QString getDeviceModelName();
+
     void handleCommand(const QStringList &args);
     void updateHardwareState();
 
